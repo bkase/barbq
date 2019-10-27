@@ -1,11 +1,27 @@
-{-# LANGUAGE FlexibleContexts, FlexibleInstances, InstanceSigs, MultiParamTypeClasses, DeriveFunctor, DerivingStrategies, GeneralizedNewtypeDeriving, KindSignatures #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE LambdaCase, BlockArguments #-}
+{-# LANGUAGE GADTs, FlexibleContexts, TypeOperators, ScopedTypeVariables, DataKinds, PolyKinds, DeriveFunctor #-}
 
 module Main where
 
 import System.Clock
+import Polysemy
+import Polysemy.Input
+import Polysemy.Output
+
+data Shell m a where
+  ExecSh :: String -> Shell m String
+
+makeSem ''Shell
+
+echo :: Member Shell r => Sem r String
+echo = execSh "hello world"
+
+shellToIO :: Member (Embed IO) r => Sem (Shell ': r) a -> Sem r a
+shellToIO = interpret $ \case
+  ExecSh s -> embed $ do
+          line <- getLine
+          return $ s <> ":" <> line
 
 -- Actions get an `a` from the universe
 newtype Action m a = Action (m a)
@@ -32,5 +48,7 @@ newtype Component a view = Component { consume :: a -> view }
 --  <*> 
 
 main :: IO ()
-main = print 4
+main = do
+   out <- runM . shellToIO $ echo
+   putStrLn out
 

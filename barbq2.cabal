@@ -18,8 +18,25 @@ extra-source-files:  CHANGELOG.md
 
 executable barbq2
   main-is:             Main.hs
+  ghc-options: -O2 -flate-specialise -fspecialise-aggressively
   -- other-modules:
-  -- other-extensions:
-  build-depends:       base >=4.12 && <4.13, clock
+  other-extensions:
+    DataKinds
+    FlexibleContexts
+    GADTs
+    LambdaCase
+    PolyKinds
+    RankNTypes
+    ScopedTypeVariables
+    TypeApplications
+    TypeOperators
+    TypeFamilies
+    FlexibleInstances
+    InstanceSigs
+    MultiParamTypeClasses
+    GeneralizedNewtypeDeriving
+    KindSignatures
+    DerivingStrategies
+  build-depends:       base >=4.12 && <4.13, clock, polysemy
   -- hs-source-dirs:
   default-language:    Haskell2010
