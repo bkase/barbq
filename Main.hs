@@ -1,59 +1,59 @@
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE LambdaCase, BlockArguments #-}
-{-# LANGUAGE GADTs, FlexibleContexts, TypeOperators, ScopedTypeVariables, DataKinds, PolyKinds, DeriveFunctor #-}
-{-# OPTIONS_GHC -fplugin=Polysemy.Plugin #-}
+{-# LANGUAGE LambdaCase, MultiParamTypeClasses, GeneralizedNewtypeDeriving, DeriveFunctor, NoImplicitPrelude, OverloadedStrings, DefaultSignatures, GADTs, KindSignatures, FlexibleInstances, TemplateHaskell #-}
 
 module Main where
 
+import Relude
 import System.Clock
-import Polysemy
-import Polysemy.Internal (send)
-import Polysemy.Input
-import Polysemy.Output
+import Data.Semigroup ((<>))
+import Control.Concurrent.Classy.Async
+import Control.Monad.Conc.Class
+import Control.Lens
 
-data Timeout = Immediate | In TimeSpec
+data Timeout = Immediate | In Int -- micors
 
 now :: [Timeout]
 now = [Immediate]
 
-every :: TimeSpec -> [Timeout]
+every :: Int -> [Timeout]
 every s = In s : every s
 
-data Scheduler m a where
-  Schedule :: Timeout -> (a -> m ()) -> Scheduler m a
+toMicros :: Timeout -> Int
+toMicros Immediate = 0
+toMicros (In amt) = amt
 
-makeSem ''Scheduler
+class Monad m => MonadIntervalRunner o (m :: * -> *) where
+  latest :: m (Maybe o)
+  start  :: m o -> m (Async m o)
 
-data Provider o m a where
-  Latest :: Provider o m (Maybe o)
-  Start :: [Timeout] -> m a -> Provider o m ()
+data RunnerState o = RunnerState { _rsTimeouts :: [Timeout], _rsLatest :: Maybe o }
+  deriving Functor
 
-makeSem ''Provider
+makeLenses ''RunnerState
 
-doSomething :: Member (Provider o) r => Sem r a -> Sem r ()
-doSomething ma = start [] ma
+instance (Monad m, MonadConc m) => MonadIntervalRunner o (StateT (RunnerState o) m) where
+  latest = view rsLatest <$> get
 
---latest :: forall o r. Member (Provider o) r => Sem r (Maybe o)
---latest = send (Latest :: Provider o (Sem r) (Maybe o))
+  start task = do
+    state <- get
+    let next:rest = view rsTimeouts state
+    put $ set rsTimeouts rest state
 
---start :: forall o r a. Member (Provider o) r => [Timeout] -> Sem r a -> Provider o (Sem r) a
---start ts ma = send (Start ts ma :: Provider o (Sem r) a)
+    async $ do
+      threadDelay $ toMicros next
+      task
 
--- providerToScheduler :: Members '[Scheduler, 
+class Monad m => MonadShell m where
+  execSh :: Text -> m Text
+  default execSh :: (MonadTrans t, MonadShell m1, m ~ t m1) => Text -> m Text
+  execSh = lift . execSh
 
-data Shell m a where
-  ExecSh :: String -> Shell m String
+echo :: MonadShell m => Text -> m Text
+echo s = execSh $ "echo " <> s
 
-makeSem ''Shell
-
-echo :: Member Shell r => Sem r String
-echo = execSh "hello world"
-
-shellToIO :: Member (Embed IO) r => Sem (Shell ': r) a -> Sem r a
-shellToIO = interpret $ \case
-  ExecSh s -> embed $ do
-          line <- getLine
-          return $ s <> ":" <> line
+instance MonadShell IO where
+  execSh s = do
+    line <- getLine
+    return $ s <> ":" <> line
 
 -- Actions get an `a` from the universe
 newtype Action m a = Action (m a)
@@ -71,6 +71,6 @@ newtype Component a view = Component { consume :: a -> view }
 
 main :: IO ()
 main = do
-   out <- runM . shellToIO $ echo
-   putStrLn out
+  res <- echo "helloWorld"
+  putStrLn (toString res)
 
