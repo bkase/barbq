@@ -9,6 +9,10 @@ let
                 {
                   ghc = super.ghc // { withPackages = super.ghc.withHoogle; };
                   ghcWithPackages = self.ghc.withPackages;
+
+                  polysemy = self.polysemy_1_2_1_0;
+
+                  polysemy-plugin = pkgs.haskell.lib.dontCheck (super.polysemy-plugin.override { polysemy = self.polysemy_1_2_1_0; });
                 }
               );
             };
