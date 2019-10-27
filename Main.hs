@@ -3,8 +3,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
 
--- Test CI
-
 module Main where
 
 import System.Clock
