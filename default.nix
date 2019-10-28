@@ -12,6 +12,8 @@ let
 
                   polysemy = self.polysemy_1_2_1_0;
 
+                  async-timer = pkgs.haskell.lib.dontCheck super.async-timer;
+
                   polysemy-plugin = pkgs.haskell.lib.dontCheck (super.polysemy-plugin.override { polysemy = self.polysemy_1_2_1_0; });
                 }
               );

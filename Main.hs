@@ -1,13 +1,15 @@
-{-# LANGUAGE LambdaCase, MultiParamTypeClasses, GeneralizedNewtypeDeriving, DeriveFunctor, NoImplicitPrelude, OverloadedStrings, DefaultSignatures, GADTs, KindSignatures, FlexibleInstances, TemplateHaskell #-}
+{-# LANGUAGE LambdaCase, MultiParamTypeClasses, GeneralizedNewtypeDeriving, DeriveFunctor, NoImplicitPrelude, OverloadedStrings, DefaultSignatures, GADTs, KindSignatures, FlexibleInstances, TemplateHaskell, TypeFamilies, FlexibleContexts, ScopedTypeVariables #-}
 
 module Main where
 
 import Relude
 import System.Clock
 import Data.Semigroup ((<>))
-import Control.Concurrent.Classy.Async
 import Control.Monad.Conc.Class
 import Control.Lens
+import Control.Concurrent.Async.Timer
+import Brick.BChan
+import Control.Monad.IO.Unlift
 
 data Timeout = Immediate | In Int -- micors
 
@@ -21,26 +23,28 @@ toMicros :: Timeout -> Int
 toMicros Immediate = 0
 toMicros (In amt) = amt
 
-class Monad m => MonadIntervalRunner o (m :: * -> *) where
-  latest :: m (Maybe o)
-  start  :: m o -> m (Async m o)
+class Monad m => MonadChan chan m where
+  newChan :: Int -> m (chan a)
+  -- these block
+  writeChan :: chan a -> a -> m ()
+  readChan :: chan a -> m a
 
-data RunnerState o = RunnerState { _rsTimeouts :: [Timeout], _rsLatest :: Maybe o }
-  deriving Functor
+instance (Monad m, MonadIO m) => MonadChan BChan m where
+  newChan capacity = liftIO (newBChan capacity)
+  writeChan chan a = liftIO (writeBChan chan a)
+  readChan chan = liftIO (readBChan chan)
 
-makeLenses ''RunnerState
+class Monad m => MonadIntervalRunner chan o (m :: * -> *) where
+  start :: chan o -> TimerConf -> m o -> m (ThreadId m)
 
-instance (Monad m, MonadConc m) => MonadIntervalRunner o (StateT (RunnerState o) m) where
-  latest = view rsLatest <$> get
-
-  start task = do
-    state <- get
-    let next:rest = view rsTimeouts state
-    put $ set rsTimeouts rest state
-
-    async $ do
-      threadDelay $ toMicros next
-      task
+instance (Monad m, MonadConc m, MonadChan BChan m, MonadUnliftIO m) => MonadIntervalRunner BChan o m where
+  start chan conf task =
+    fork $
+    withAsyncTimer conf $ \timer ->
+      forever $ do
+        wait timer
+        o <- task
+        writeChan chan o
 
 class Monad m => MonadShell m where
   execSh :: Text -> m Text
@@ -51,9 +55,8 @@ echo :: MonadShell m => Text -> m Text
 echo s = execSh $ "echo " <> s
 
 instance MonadShell IO where
-  execSh s = do
-    line <- getLine
-    return $ s <> ":" <> line
+  execSh s =
+    return $ s <> ":test"
 
 -- Actions get an `a` from the universe
 newtype Action m a = Action (m a)
@@ -71,6 +74,14 @@ newtype Component a view = Component { consume :: a -> view }
 
 main :: IO ()
 main = do
-  res <- echo "helloWorld"
-  putStrLn (toString res)
+  (c :: BChan Text) <- newChan 10
+  let conf1 = defaultConf & setInitDelay  500 -- 500 ms
+                          & setInterval  1000 -- 1 s
+  let conf2 = defaultConf & setInitDelay  250 -- 250 ms
+                          & setInterval  2200 -- 2 s
+  id1 <- start c conf1 (echo "echo1")
+  id2 <- start c conf2 (echo "echo2")
+  forM_ [1..20] $ \_ -> do
+    res <- readChan c
+    putStrLn (toString res)
 
