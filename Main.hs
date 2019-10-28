@@ -11,18 +11,6 @@ import Control.Concurrent.Async.Timer
 import Brick.BChan
 import Control.Monad.IO.Unlift
 
-data Timeout = Immediate | In Int -- micors
-
-now :: [Timeout]
-now = [Immediate]
-
-every :: Int -> [Timeout]
-every s = In s : every s
-
-toMicros :: Timeout -> Int
-toMicros Immediate = 0
-toMicros (In amt) = amt
-
 class Monad m => MonadChan chan m where
   newChan :: Int -> m (chan a)
   -- these block
@@ -30,9 +18,9 @@ class Monad m => MonadChan chan m where
   readChan :: chan a -> m a
 
 instance (Monad m, MonadIO m) => MonadChan BChan m where
-  newChan capacity = liftIO (newBChan capacity)
-  writeChan chan a = liftIO (writeBChan chan a)
-  readChan chan = liftIO (readBChan chan)
+  newChan = liftIO . newBChan
+  writeChan chan = liftIO . writeBChan chan
+  readChan = liftIO . readBChan
 
 class Monad m => MonadIntervalRunner chan o (m :: * -> *) where
   start :: chan o -> TimerConf -> m o -> m (ThreadId m)
@@ -51,21 +39,45 @@ class Monad m => MonadShell m where
   default execSh :: (MonadTrans t, MonadShell m1, m ~ t m1) => Text -> m Text
   execSh = lift . execSh
 
-echo :: MonadShell m => Text -> m Text
-echo s = execSh $ "echo " <> s
-
 instance MonadShell IO where
   execSh s =
     return $ s <> ":test"
 
--- Actions get an `a` from the universe
-newtype Action m a = Action (m a)
+-- Tasks query the system for information
+data Task o = ShellTask Text (Text -> o)
   deriving Functor
 
--- Providers control how frequently actions are run
--- for now, just via polling
+shell :: Text -> Task Text
+shell s = ShellTask s id
 
--- provide :: forall (m :: * -> *) a. [Timeout] -> Action m a -> Provider m a
+runTask :: MonadShell m => Task o -> m o
+runTask (ShellTask s f) = f <$> execSh s
+
+-- Providers control how frequently actions are run
+-- for now, just via polling on an interval
+data Provider o =
+  Provider
+  { _providerConf :: TimerConf
+  , _providerTask :: Task o
+  , _providerDefault :: o
+  }
+
+makeLenses ''Provider
+
+after :: Int -> TimerConf
+after i = defaultConf & setInitDelay i
+
+every :: Int -> TimerConf -> TimerConf
+every = setInterval
+
+provide :: TimerConf -> Task o -> o -> Provider o
+provide conf task z = Provider conf task z
+
+runProvider :: (MonadIntervalRunner BChan o m, MonadChan BChan m, MonadConc m, MonadUnliftIO m, MonadShell m) => Provider o -> m (BChan o)
+runProvider provider = do
+  chan <- newChan 30
+  _tid <- start chan (view providerConf provider) (runTask $ (_providerTask provider))
+  return chan
 
 newtype Component a view = Component { consume :: a -> view }
 
@@ -74,14 +86,11 @@ newtype Component a view = Component { consume :: a -> view }
 
 main :: IO ()
 main = do
-  (c :: BChan Text) <- newChan 10
-  let conf1 = defaultConf & setInitDelay  500 -- 500 ms
-                          & setInterval  1000 -- 1 s
-  let conf2 = defaultConf & setInitDelay  250 -- 250 ms
-                          & setInterval  2200 -- 2 s
-  id1 <- start c conf1 (echo "echo1")
-  id2 <- start c conf2 (echo "echo2")
+  c1 <- runProvider $ provide (after 500 & every 1000) (shell "echo hello") "?"
+  c2 <- runProvider $ provide (after 250 & every 2200) (shell "ls goodbye") "?"
   forM_ [1..20] $ \_ -> do
-    res <- readChan c
+    res <- readChan c1
+    putStrLn (toString res)
+    res <- readChan c2
     putStrLn (toString res)
 
