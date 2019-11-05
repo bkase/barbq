@@ -36,11 +36,13 @@ instance MonadIntervalRunner M where
   start :: forall o. TimerConf -> Output () -> M o -> o -> M (Input o)
   start conf triggerOutput task z = do
     (output, input) <- liftIO $ spawn (latest z)
-    _tid <- forkIO $
-      withAsyncTimer conf $ \timer ->
-        runEffect $ runTask timer >-> toOutput (output <> contramap (const ()) triggerOutput)
+    _tid <- forkIO $ withAsyncTimer conf (loop output)
     return input
       where
+        loop output timer = do
+          runEffect $ runTask timer >-> toOutput (output <> contramap (const ()) triggerOutput)
+          loop output timer
+
         runTask :: Timer -> Producer o M ()
         runTask timer = do
           lift $ liftIO $ wait timer
@@ -131,32 +133,24 @@ app = do
   -- we send unit to unblock so we can use latest
   (outputU, inputU) <- liftIO $ spawn (newest 1)
 
-  let tupled = (,) <$> provide (after 0 & everyi 2000) (shell "kwm...") "?" <*> provide (after 200 & everyi 1500) (shell "foo..") "?"
+  -- (purely) describe the providers
+  let tupled = (\a b c d -> (a,b,c,d)) <$> provide (after 1000 & everyi 2000) (shell "kwm...") "?" <*> provide (after 300 & everyi 1500) (shell "foo..") "?" <*> provide (after 200 & everyi 4000) (shell "bar..") "?" <*> provide (after 20000 & everyi 40000) (shell "bar..") "?"
 
+  -- run the provider
   inputG <- runProvider outputU tupled
 
+  -- dump provided data to stdout
   liftIO $ runEffect $ fromInput inputG >-> handler inputU
-  --traverse_ wait [a1, a2]
   where
-    handler :: (Show i, Show s) => Input () -> Consumer (i, s) IO r
+    handler :: (Show a) => Input () -> Consumer a IO r
     handler unitInput = forever $ do
-      lift $ runEffect $ fromInput unitInput >-> handleUnit
-      (i, s) <- await
-      print (i, s)
-      where
-        handleUnit :: Consumer () IO ()
-        handleUnit = await
+      lift $ runEffect $ fromInput unitInput >-> await
+      a <- await
+      print a
 
 runApp :: M () -> IO ()
 runApp (M m) = runReaderT m (Environment 0)
 
 main :: IO ()
 main = runApp app
-  --c1 <- runProvider $ provide (after 500 & everyi 1000) (shell "echo hello") "?"
-  --c2 <- runProvider $ provide (after 250 & everyi 2200) (shell "ls goodbye") "?"
-  --forM_ [1..20] $ \_ -> do
-    --res <- readChan c1
-    --putStrLn (toString res)
-    --res <- readChan c2
-    --putStrLn (toString res)
 
