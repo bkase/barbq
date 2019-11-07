@@ -3,6 +3,7 @@
 module Main where
 
 import Relude
+import Barbq.Types
 import System.Clock
 import Data.Semigroup ((<>))
 import Control.Lens
@@ -18,19 +19,11 @@ import Pipes (Consumer, Producer, runEffect, (>->), yield, await)
 import Pipes.Concurrent (spawn, latest, toOutput, fromInput, unbounded, newest, Input, Output)
 import qualified Pipes.Prelude as P
 
-newtype Environment = Environment Int
-
-newtype M a = M (ReaderT Environment IO a)
-  deriving (Functor, Applicative, Monad, MonadIO, MonadUnliftIO, MonadMask, MonadCatch, MonadThrow)
-
 --class Monad m => MonadChan chan m where
   --newChan :: Int -> m (chan a)
   ---- these block
   --writeChan :: chan a -> a -> m ()
   --readChan :: chan a -> m a
-
-class Monad m => MonadIntervalRunner (m :: * -> *) where
-  start :: forall o. TimerConf -> Output () -> m o -> o -> m (Input o)
 
 instance MonadIntervalRunner M where
   start :: forall o. TimerConf -> Output () -> M o -> o -> M (Input o)
@@ -49,43 +42,17 @@ instance MonadIntervalRunner M where
           o <- lift task
           yield o
 
-class Monad m => MonadShell m where
-  execSh :: Text -> m Text
-  default execSh :: (MonadTrans t, MonadShell m1, m ~ t m1) => Text -> m Text
-  execSh = lift . execSh
-
 instance MonadShell M where
   execSh s =
     liftIO $ return $ s <> ":test"
 
--- Tasks query the system for information
-data Task a =
-    NopTask a
-  | ShellTask Text (Text -> a)
-  deriving Functor
-
 shell :: Text -> Task Text
-shell s = ShellTask s id
+shell = flip ShellTask id
 
 runTask :: (MonadIO m, MonadShell m) => Task o -> m o
 runTask (ShellTask s f) = do
   liftIO $ threadDelay 100000
   f <$> execSh s
-
--- Providers control how frequently actions are run
--- for now, just via polling on an interval
-data ProviderAtom a =
-  ProviderAtom
-  { _providerConf :: TimerConf
-  , _providerTask :: Task a
-  , _providerDefault :: a
-  }
-  deriving Functor
-
-makeLenses ''ProviderAtom
-
-newtype Provider a = Provider (A.Ap ProviderAtom a)
-  deriving (Functor, Applicative)
 
 newtype ProviderRuntime m a = ProviderRuntime (m (Input a))
   deriving Functor
