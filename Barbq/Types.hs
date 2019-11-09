@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, RankNTypes, KindSignatures, DefaultSignatures, GADTs, DeriveFunctor, TemplateHaskell #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, RankNTypes, KindSignatures, DefaultSignatures, GADTs, DeriveFunctor, TemplateHaskell, NoImplicitPrelude #-}
 
 module Barbq.Types (
   Environment(..),

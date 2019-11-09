@@ -2,17 +2,20 @@
 
 module Main where
 
-import Relude
+import Relude hiding ((<|>))
 import Barbq.Types
+import Barbq.UI
 import System.Clock
 import Data.Semigroup ((<>))
+import Control.Monad.Co
+import Control.Comonad.Store
 import Control.Lens
 import Control.Concurrent (threadDelay)
 import UnliftIO.Concurrent (forkIO)
 import Control.Monad.Catch (MonadCatch, MonadMask, MonadThrow)
 import Control.Concurrent.Async (async)
 import Control.Concurrent.Async.Timer (withAsyncTimer, TimerConf, defaultConf, setInitDelay, setInterval, Timer, wait)
-import Brick.BChan
+import Graphics.Vty (standardIOConfig, mkVty, string, text, defAttr, withForeColor, green, picForImage, update, nextEvent, shutdown, blue, withBackColor, (<|>))
 import Control.Monad.IO.Unlift
 import Control.Applicative.Free as A
 import Pipes (Consumer, Producer, runEffect, (>->), yield, await)
@@ -93,7 +96,16 @@ runProvider triggerOutput (Provider freeAp) = minput
     task = view providerTask
 
 -- TODO
--- newtype Component a view = Component { consume :: a -> view }
+-- type UI a = (a -> Widget ()
+
+--type Component w = w (UI (Co w ()))
+
+--counter :: Component (Store Int)
+--counter = store render 0
+  --where
+    --render :: Int -> UI (Co (Store Int) ())
+    --render count send =
+      --send "hello"
 
 app :: M ()
 app = do
@@ -119,5 +131,11 @@ runApp :: M () -> IO ()
 runApp (M m) = runReaderT m (Environment 0)
 
 main :: IO ()
-main = runApp app
+main = do
+  cfg <- standardIOConfig
+  vty <- mkVty cfg
+  flip runRenderM vty $ exploreCo combinedExample
+  shutdown vty
+  print ("Last event was: " ++ show 3)
+  runApp app
 
