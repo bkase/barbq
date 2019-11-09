@@ -37,12 +37,14 @@ pairDay p1 p2 f (Day f1 g1 g) (Day f2 g2 h) =
   let (y1, y2) = p2 (,) g1 g2 in
   f (g x1 y1) (h x2 y2)
 
-
-newtype RenderM a = RenderM (ReaderT Vty IO a)
-  deriving (Functor, Applicative, Monad, MonadReader Vty, MonadIO)
+newtype RenderM a = RenderM (StateT [RenderM ()] (ReaderT Vty IO) a)
+  deriving (Functor, Applicative, Monad, MonadReader Vty, MonadState [RenderM ()], MonadIO)
 
 runRenderM :: RenderM a -> Vty -> IO a
-runRenderM (RenderM rt) = runReaderT rt
+runRenderM (RenderM st) vty = do
+  (a, actions) <- runReaderT (runStateT st []) vty
+  forM_ actions (`runRenderM` vty)
+  return a
 
 type Handler a = a -> RenderM ()
 
@@ -137,7 +139,7 @@ tracedExample = traced render where
     liftIO $ update vty pic
     e <- liftIO $ nextEvent vty
     if count < 10 then
-      send (tell (AddingInt 1))
+      modify ((:) $ send (tell (AddingInt 1)))
     else
       liftIO $ print "done"
 
@@ -153,7 +155,7 @@ storeExample = store render 0 where
     liftIO $ update vty pic
     e <- liftIO $ nextEvent vty
     if count < 10 then
-      send (modify (+1))
+      modify ((:) $ send (modify (+1)))
     else
       liftIO $ print "done3"
 
