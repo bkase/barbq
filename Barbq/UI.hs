@@ -37,18 +37,39 @@ pairDay p1 p2 f (Day f1 g1 g) (Day f2 g2 h) =
   let (y1, y2) = p2 (,) g1 g2 in
   f (g x1 y1) (h x2 y2)
 
-newtype RenderM a = RenderM (StateT [RenderM ()] (ReaderT Vty IO) a)
-  deriving (Functor, Applicative, Monad, MonadReader Vty, MonadState [RenderM ()], MonadIO)
+type Responder = Event -> RenderM ()
 
-runRenderM :: RenderM a -> Vty -> IO a
-runRenderM (RenderM st) vty = do
-  (a, actions) <- runReaderT (runStateT st []) vty
-  forM_ actions (`runRenderM` vty)
-  return a
+newtype RenderM a = RenderM (StateT ([RenderM ()], Responder) (ReaderT Vty IO) a)
+  deriving (Functor, Applicative, Monad, MonadReader Vty, MonadState ([RenderM ()], Responder), MonadIO)
+
+runRenderM :: RenderM () -> Vty -> IO ()
+runRenderM rm vty = do
+  next <- redraw rm vty
+  continue next
+  where
+    redraw :: RenderM () -> Vty -> IO Responder
+    redraw (RenderM st) vty  = do
+      (a, (actions, next)) <- runReaderT (runStateT st ([], const $ return ())) vty
+      nexts <- forM actions (`redraw` vty)
+      return $ foldr (\next1 build e -> next1 e >>= \() -> build e) (const $ return ()) (next:nexts)
+
+    continue :: Responder -> IO ()
+    continue next = do
+      e <- liftIO $ nextEvent vty
+      runRenderM (next e) vty
 
 type Handler a = a -> RenderM ()
 
-type UI a = Handler a -> RenderM ()
+fire :: Handler a -> a -> RenderM ()
+fire send a =
+  modify (\s -> (send a : fst s, snd s))
+
+handler :: Responder -> RenderM ()
+handler h =
+  modify (\s -> (fst s, \e -> snd s e >>= \() -> h e))
+
+-- a picture and function that reacts to events
+type UI a = Handler a -> (Image, Responder)
 
 type Component' w m = w (UI (m ()))
 type Component w = Component' w (Co w)
@@ -92,11 +113,16 @@ pairWriterTraced pairing f (WriterT writer) (TracedT gf) =
   pairing (\(a, w) f1 -> f a (f1 w)) writer gf
 
 explore :: forall w m. Comonad w => Pairing m w -> Component' w m -> RenderM ()
-explore pair space = extract space send
+explore pair space = do
+    vty <- ask
+    let (img, runner) = extract space send
+    let pic = picForImage img
+    liftIO $ update vty pic
+    handler runner
     where
       send :: m () -> RenderM ()
-      send action = do
-        let space' = (pair (const id) action <<< duplicate) space
+      send action =
+        let space' = (pair (const id) action <<< duplicate) space in
         explore pair space'
 
 exploreCo :: forall w. Comonad w => Component w -> RenderM ()
@@ -130,42 +156,35 @@ instance Monoid AddingInt where
 tracedExample :: Component' (Traced AddingInt) (Writer AddingInt)
 tracedExample = traced render where
   render :: AddingInt -> UI (Writer AddingInt ())
-  render (AddingInt count) send = do
-    vty <- ask
+  render (AddingInt count) send =
     let line0 = text (defAttr ` withForeColor ` green) ("Traced " <> show count <> " line")
         line1 = string (defAttr ` withBackColor ` blue) "second line"
         img = line0 <|> line1
-        pic = picForImage img
-    liftIO $ update vty pic
-    e <- liftIO $ nextEvent vty
-    if count < 10 then
-      modify ((:) $ send (tell (AddingInt 1)))
-    else
-      liftIO $ print "done"
+    in
+    (img, const $
+        when (count < 3) $
+          fire send (tell (AddingInt 1)))
 
 storeExample :: Component' (Store Int) (State Int)
 storeExample = store render 0 where
   render :: Int -> UI (State Int ())
-  render count send = do
-    vty <- ask
+  render count send =
     let line0 = text (defAttr ` withForeColor ` green) ("Store " <> show count <> " line")
         line1 = string (defAttr ` withBackColor ` blue) "second line"
         img = line0 <|> line1
-        pic = picForImage img
-    liftIO $ update vty pic
-    e <- liftIO $ nextEvent vty
-    if count < 10 then
-      modify ((:) $ send (modify (+1)))
-    else
-      liftIO $ print "done3"
+    in
+    (img, const $
+        when (count < 3) $
+          fire send (modify (+1)))
 
 combinedExample :: Component (Day (Store Int) (Traced AddingInt))
 combinedExample = combine with store traced
   where
     with :: forall a. UI a -> UI a -> UI a
-    with ui1 ui2 send = do
-      ui1 send
-      ui2 send
+    with ui1 ui2 send =
+      let (pic1, h1) = ui1 send in
+      let (pic2, h2) = ui2 send in
+      (pic1 <|> pic2, \e -> h1 e >>= \() -> h2 e)
 
     traced :: Component (Traced AddingInt)
     traced = componentMapAction writerToCoTraced tracedExample
