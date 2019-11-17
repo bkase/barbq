@@ -49,7 +49,7 @@ runRenderM (RenderM rm) = runReaderT rm
 type Handler a s = a -> SendResult s
 
 -- a picture and function that reacts to events
-newtype UI a = UI (forall s. Handler a s -> (Image, Responder s))
+newtype UI a = UI (forall s. (Handler a s -> WriterT (Responder s) Identity Image))
 
 type Component' w m = w (UI (m ()))
 type Component w = Component' w (Co w)
@@ -61,7 +61,7 @@ componentMapAction :: forall m1 m2 w.
 componentMapAction f = fmap transformUi
   where
     transformUi :: UI (m1 ()) -> UI (m2 ())
-    transformUi (UI ui1) = UI $ \send -> ui1 (send <<< f)
+    transformUi (UI ui) = UI $ \send -> ui (send <<< f)
 
 stateToCoStore :: forall f g a s. State s a -> Co (Store s) a
 stateToCoStore state = co (story state)
@@ -95,7 +95,7 @@ pairWriterTraced pairing f (WriterT writer) (TracedT gf) =
 explore :: forall w m. Comonad w => Pairing m w -> Component' w m -> RenderM ()
 explore pair space = do
     vty <- ask
-    let (img, runner) = let (UI ui) = extract space in ui send
+    let (img, runner) = let (UI ui) = extract space in runWriter (ui send)
     let pic = picForImage img
     liftIO $ update vty pic
     e <- liftIO $ nextEvent vty
@@ -137,37 +137,37 @@ instance Monoid AddingInt where
 tracedExample :: Component' (Traced AddingInt) (Writer AddingInt)
 tracedExample = traced render where
   render :: AddingInt -> UI (Writer AddingInt ())
-  render (AddingInt count) = UI $ \send ->
+  render (AddingInt count) = UI $ \send -> do
     let line0 = text (defAttr ` withForeColor ` green) ("Traced " <> show count <> " line")
         line1 = string (defAttr ` withBackColor ` blue) "second line"
         img = line0 <|> line1
-    in
-    (img, const $ if count < 3 then
+    () <- tell $ const $ if count < 3 then
             send (tell (AddingInt 1))
           else
-            Endo id)
+            Endo id
+    return img
 
 storeExample :: Component' (Store Int) (State Int)
 storeExample = store render 0 where
   render :: Int -> UI (State Int ())
-  render count = UI $ \send ->
+  render count = UI $ \send -> do
     let line0 = text (defAttr ` withForeColor ` green) ("Store " <> show count <> " line")
         line1 = string (defAttr ` withBackColor ` blue) "second line"
         img = line0 <|> line1
-    in
-    (img, const $
-        if count < 3 then
-          send (modify (+1))
-        else Endo id)
+    () <- tell $ const $ if count < 3 then
+            send (modify (+1))
+          else
+            Endo id
+    return img
 
 combinedExample :: Component (Day (Store Int) (Traced AddingInt))
 combinedExample = combine with store traced
   where
     with :: forall a. UI a -> UI a -> UI a
-    with (UI ui1) (UI ui2) = UI $ \send ->
-      let (pic1, h1) = ui1 send in
-      let (pic2, h2) = ui2 send in
-      (pic1 <|> pic2, \e -> h1 e <> h2 e)
+    with (UI ui1) (UI ui2) = UI $ \send -> do
+      pic1 <- ui1 send
+      pic2 <- ui2 send
+      return $ pic1 <|> pic2
 
     traced :: Component (Traced AddingInt)
     traced = componentMapAction writerToCoTraced tracedExample
