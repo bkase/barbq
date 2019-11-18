@@ -187,7 +187,6 @@ app = do
   -- we send unit to unblock so we can use latest
   (outputU, inputU) <- liftIO $ spawn (newest 1)
   -- (purely) describe the providers
-  --let tupled = (\a b c d -> (a, b, c, d)) <$> provide (after 1000 & everyi 2000) (shell "kwm...") "?" <*> provide (after 300 & everyi 1500) (shell "foo..") "?" <*> provide (after 200 & everyi 4000) (shell "bar..") "?" <*> provide (after 20000 & everyi 40000) (shell "bar..") "?"
   let left :: Provider Int = fromMaybe 0 <$> provide (after 0 & everyi 500) (shellInt volumeShell) Nothing
   let right :: Provider (Maybe Text) = provide (after 1000 & everyi 2000) (Just <$> shell wifiShell) Nothing
   let tupled = (,) <$> left <*> right
@@ -195,7 +194,6 @@ app = do
   inputG <- runProvider outputU tupled
   input <- liftIO $ normalize inputG inputU
   liftIO $ runRenderM (exploreCo realComponent) vty input
-  -- dump provided data to stdout
   liftIO $ shutdown vty
   where
     -- Given a "latest" input and a unit trigger, yield a triggered latest
@@ -204,6 +202,7 @@ app = do
       (output, input) <- spawn (newest 1)
       _tid <- forkIO $ runEffect $ fromInput latestInput >-> handler triggerInput >-> toOutput output
       return input
+    -- wait for the trigger and yield Just until a count threshold
     handler :: Input () -> Pipe a (Maybe a) IO ()
     handler triggerInput = loop 0
       where
