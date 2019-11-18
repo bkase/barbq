@@ -66,32 +66,42 @@ runRenderM crm vty input = runReaderT m vty
 type Handler a s = a -> SendResult s
 
 -- a picture and function that reacts to events
-newtype UI e a = UI (forall s. (Handler a s -> WriterT (Responder e s) Identity Image))
+newtype UI e v a = UI (forall s. (Handler a s -> WriterT (Responder e s) Identity v))
 
-type Component' e w m = w (UI e (m ()))
+type Component' e v w m = w (UI e v (m ()))
 
-type Component e w = Component' e w (Co w)
+type Component e v w = Component' e v w (Co w)
+
+componentMapView
+  :: forall m w e v1 v2. Functor w
+  => (v1 -> v2)
+  -> Component' e v1 w m
+  -> Component' e v2 w m
+componentMapView f = fmap transformUi
+  where
+    transformUi :: UI e v1 (m ()) -> UI e v2 (m ())
+    transformUi (UI ui) = UI $ fmap f . ui
 
 componentMapAction
-  :: forall m1 m2 w e. Functor w
+  :: forall m1 m2 w e v. Functor w
   => (m1 () -> m2 ())
-  -> Component' e w m1
-  -> Component' e w m2
+  -> Component' e v w m1
+  -> Component' e v w m2
 componentMapAction f = fmap transformUi
   where
-    transformUi :: UI e (m1 ()) -> UI e (m2 ())
+    transformUi :: UI e v (m1 ()) -> UI e v (m2 ())
     transformUi (UI ui) = UI $ \send -> ui (send <<< f)
 
 componentPullbackEvent
-  :: forall m w e1 e2. Functor w
+  :: forall m w e1 e2 v. Functor w
   => (e2 -> e1)
-  -> Component' e1 w m
-  -> Component' e2 w m
-componentPullbackEvent f = fmap transformEvent
+  -> Component' e1 v w m
+  -> Component' e2 v w m
+componentPullbackEvent f = fmap transformUi
   where
-    transformEvent :: UI e1 (m ()) -> UI e2 (m ())
-    transformEvent (UI ui) = UI $ \send -> mapWriter writerMap (ui send)
-    writerMap :: (Image, Responder e1 s) -> (Image, Responder e2 s)
+    transformUi :: UI e1 v (m ()) -> UI e2 v (m ())
+    transformUi (UI ui) = UI $ \send -> mapWriter writerMap (ui send)
+    writerMap :: (v, Responder e1 s) -> (v, Responder e2 s)
     writerMap (img, r) = (img, r <<< f)
 
 stateToCoStore :: forall f g a s. State s a -> Co (Store s) a
@@ -123,13 +133,13 @@ pairWriterTraced :: forall f g s. Pairing f g -> Pairing (WriterT s f) (TracedT 
 pairWriterTraced pairing f (WriterT writer) (TracedT gf) =
   pairing (\(a, w) f1 -> f a (f1 w)) writer gf
 
-explore :: forall w m e. Comonad w => Pairing m w -> Component' e w m -> Consumer (Maybe e) RenderM ()
+explore :: forall w m e. Comonad w => Pairing m w -> Component' e Image w m -> Consumer (Maybe e) RenderM ()
 explore pair space = do
   vty <- lift ask
   let (img, runner) = let { (UI ui) = extract space } in runWriter (ui send)
   let pic = picForImage img
   bounds <- liftIO $ outputIface vty & displayBounds
-  liftIO $ print bounds
+  --liftIO $ print bounds
   liftIO $ update vty pic
   -- TODO: Keystrokes
   -- e <- liftIO $ nextEvent vty
@@ -138,25 +148,25 @@ explore pair space = do
     Nothing -> return ()
     Just e -> explore pair (appEndo (runner e) space)
   where
-    send :: m () -> SendResult (Component' e w m)
+    send :: forall v. m () -> SendResult (Component' e v w m)
     send action =
       Endo $ pair (const id) action <<< duplicate
     doEffect :: forall m'. Monad  m' => Effect  m' e ->  m' e
     doEffect = runEffect
 
-exploreCo :: forall w e. Comonad w => Component e w -> Consumer (Maybe e) RenderM ()
+exploreCo :: forall w e v. Comonad w => Component e Image w -> Consumer (Maybe e) RenderM ()
 exploreCo = explore (pairSym pairCo)
 
 combine
-  :: forall w1 w2 e. Comonad w1
+  :: forall w1 w2 e v. Comonad w1
   => Comonad w2
-  => (forall a. UI e a -> UI e a -> UI e a)
-  -> Component e w1
-  -> Component e w2
-  -> Component e (Day w1 w2)
+  => (forall a. UI e v a -> UI e v a -> UI e v a)
+  -> Component e v w1
+  -> Component e v w2
+  -> Component e v (Day w1 w2)
 combine with w1 = day (build <$> w1)
   where
-    build :: UI e (Co w1 ()) -> UI e (Co w2 ()) -> UI e (Co (Day w1 w2) ())
+    build :: UI e v (Co w1 ()) -> UI e v (Co w2 ()) -> UI e v (Co (Day w1 w2) ())
     build (UI render1) (UI render2) =
       with (UI (\send -> render1 $ \co -> send (liftLeft co)))
         (UI (\send -> render2 $ \co -> send (liftRight co)))
@@ -175,10 +185,10 @@ instance Semigroup AddingInt where
 instance Monoid AddingInt where
   mempty = AddingInt 0
 
-tracedExample :: Component' e (Traced AddingInt) (Writer AddingInt)
+tracedExample :: Component' e Image (Traced AddingInt) (Writer AddingInt)
 tracedExample = traced render
   where
-    render :: AddingInt -> UI e (Writer AddingInt ())
+    render :: AddingInt -> UI e Image (Writer AddingInt ())
     render (AddingInt count) = UI $ \send -> do
       let line0 = text (defAttr `withForeColor` green) ("Traced " <> show count <> " line")
           line1 = string (defAttr `withBackColor` blue) "x"
@@ -190,10 +200,10 @@ tracedExample = traced render
             else Endo id
       return img
 
-storeExample :: Component' e (Store Int) (State Int)
+storeExample :: Component' e Image (Store Int) (State Int)
 storeExample = store render 0
   where
-    render :: Int -> UI e (State Int ())
+    render :: Int -> UI e Image (State Int ())
     render count = UI $ \send -> do
       let line0 = text (defAttr `withForeColor` green) ("Store " <> show count <> " line")
           line1 = string (defAttr `withBackColor` blue) "x"
@@ -205,31 +215,31 @@ storeExample = store render 0
             else Endo id
       return $ img & resizeWidth 20 & translateX 3
 
-combinedExample :: forall e. Component e (Day (Store Int) (Traced AddingInt))
+combinedExample :: forall e. Component e Image (Day (Store Int) (Traced AddingInt))
 combinedExample = combine with store traced
   where
-    with :: forall a. UI e a -> UI e a -> UI e a
+    with :: forall a. UI e Image a -> UI e Image a -> UI e Image a
     with (UI ui1) (UI ui2) = UI $ \send -> do
       pic1 <- ui1 send
       pic2 <- ui2 send
       --let w1 = imageWidth pic1
       --let w2 = imageWidth pic2
       return $ pic1 <|> pic2
-    traced :: Component e (Traced AddingInt)
+    traced :: Component e Image (Traced AddingInt)
     traced = componentMapAction writerToCoTraced tracedExample
-    store :: Component e (Store Int)
+    store :: Component e Image (Store Int)
     store = componentMapAction stateToCoStore storeExample
 
-pureProvidedComponent :: forall e. e -> Reader e Image -> Component' e (Store e) (State e)
+pureProvidedComponent :: forall e v. e -> Reader e v -> Component' e v (Store e) (State e)
 pureProvidedComponent z draw = store render z
   where
-    render :: e -> UI e (State e ())
+    render :: e -> UI e v (State e ())
     render e = UI $ \send -> do
-      let img = runReader draw e
+      let v = runReader draw e
       () <- tell $ \e -> send (put e)
-      return img
+      return v
 
-volumeComponent :: Component' Int (Store Int) (State Int)
+volumeComponent :: Component' Int Image (Store Int) (State Int)
 volumeComponent = pureProvidedComponent 0 $ do
   volume <- ask
   return $ text defAttr $ emoji volume <> " " <> show volume
@@ -240,7 +250,7 @@ volumeComponent = pureProvidedComponent 0 $ do
       | i >= 33 && i < 66 = "🔉"
       | i >= 66 = "🔉"
 
-wifiComponent :: Component' (Maybe Text) (Store (Maybe Text)) (State (Maybe Text))
+wifiComponent :: Component' (Maybe Text) Image (Store (Maybe Text)) (State (Maybe Text))
 wifiComponent = pureProvidedComponent Nothing $ do
   ssid <- ask
   return $ text defAttr $ emoji ssid
@@ -248,21 +258,21 @@ wifiComponent = pureProvidedComponent Nothing $ do
     emoji Nothing = "X No wifi"
     emoji (Just name) = "> " <> name
 
-realComponent :: Component (Int, Maybe Text) (Day (Store Int) (Store (Maybe Text)))
+realComponent :: Component (Int, Maybe Text) Image (Day (Store Int) (Store (Maybe Text)))
 realComponent = combine with volume wifi
   where
-    with :: forall e a. UI e a -> UI e a -> UI e a
+    with :: forall e a. UI e Image a -> UI e Image a -> UI e Image a
     with (UI ui1) (UI ui2) = UI $ \send -> do
       pic1 <- ui1 send
       pic2 <- ui2 send
       --let w1 = imageWidth pic1
       --let w2 = imageWidth pic2
       return $ pic1 <|> string defAttr "   " <|> pic2
-    volume :: Component (Int, Maybe Text) (Store Int)
+    volume :: Component (Int, Maybe Text) Image (Store Int)
     volume =
       volumeComponent & componentMapAction stateToCoStore
         & componentPullbackEvent fst
-    wifi :: Component (Int, Maybe Text) (Store (Maybe Text))
+    wifi :: Component (Int, Maybe Text) Image (Store (Maybe Text))
     wifi =
       wifiComponent & componentMapAction stateToCoStore
         & componentPullbackEvent snd
