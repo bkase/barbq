@@ -26,8 +26,9 @@ import Control.Concurrent.Async.Timer (TimerConf)
 import Control.Lens (makeLenses)
 import Control.Monad.Catch (MonadCatch, MonadMask, MonadThrow)
 import Control.Monad.IO.Unlift
+import Data.Text.Lazy
 import Pipes.Concurrent (Input, Output)
-import Relude
+import Relude hiding (Text)
 
 -- Base Monad
 newtype Environment = Environment Int

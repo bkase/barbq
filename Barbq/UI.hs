@@ -18,7 +18,9 @@ module Barbq.UI
     pairSym,
     pairCo,
     pairDay,
-    runRenderM
+    runRenderM,
+    realComponent,
+    Pairing
     )
 where
 
@@ -28,10 +30,11 @@ import Control.Comonad.Traced
 import Control.Monad.Co
 import Control.Monad.Writer (Writer, WriterT (..), mapWriter, runWriter, tell)
 import Data.Functor.Day
+import Data.Text.Lazy
 import Graphics.Vty hiding (Event, Input)
 import Pipes ((>->), Consumer, Effect, Producer, await, runEffect, yield)
 import Pipes.Concurrent (Input, fromInput)
-import Relude hiding ((<|>))
+import Relude hiding ((<|>), Text)
 
 type Pairing f g = forall a b c. (a -> b -> c) -> f a -> g b -> c
 
@@ -89,7 +92,7 @@ componentPullbackEvent f = fmap transformEvent
     transformEvent :: UI e1 (m ()) -> UI e2 (m ())
     transformEvent (UI ui) = UI $ \send -> mapWriter writerMap (ui send)
     writerMap :: (Image, Responder e1 s) -> (Image, Responder e2 s)
-    writerMap (img, r) = (img, \e2 -> r (f e2))
+    writerMap (img, r) = (img, r <<< f)
 
 stateToCoStore :: forall f g a s. State s a -> Co (Store s) a
 stateToCoStore state = co (story state)
@@ -216,3 +219,50 @@ combinedExample = combine with store traced
     traced = componentMapAction writerToCoTraced tracedExample
     store :: Component e (Store Int)
     store = componentMapAction stateToCoStore storeExample
+
+pureProvidedComponent :: forall e. e -> Reader e Image -> Component' e (Store e) (State e)
+pureProvidedComponent z draw = store render z
+  where
+    render :: e -> UI e (State e ())
+    render e = UI $ \send -> do
+      let img = runReader draw e
+      () <- tell $ \e -> send (put e)
+      return img
+
+volumeComponent :: Component' Int (Store Int) (State Int)
+volumeComponent = pureProvidedComponent 0 $ do
+  volume <- ask
+  return $ text defAttr $ emoji volume <> " " <> show volume
+  where
+    emoji 0 = "🔇"
+    emoji i
+      | i < 33 = "🔈"
+      | i >= 33 && i < 66 = "🔉"
+      | i >= 66 = "🔉"
+
+wifiComponent :: Component' (Maybe Text) (Store (Maybe Text)) (State (Maybe Text))
+wifiComponent = pureProvidedComponent Nothing $ do
+  ssid <- ask
+  return $ text defAttr $ emoji ssid
+  where
+    emoji Nothing = "X No wifi"
+    emoji (Just name) = "> " <> name
+
+realComponent :: Component (Int, Maybe Text) (Day (Store Int) (Store (Maybe Text)))
+realComponent = combine with volume wifi
+  where
+    with :: forall e a. UI e a -> UI e a -> UI e a
+    with (UI ui1) (UI ui2) = UI $ \send -> do
+      pic1 <- ui1 send
+      pic2 <- ui2 send
+      --let w1 = imageWidth pic1
+      --let w2 = imageWidth pic2
+      return $ pic1 <|> string defAttr "   " <|> pic2
+    volume :: Component (Int, Maybe Text) (Store Int)
+    volume =
+      volumeComponent & componentMapAction stateToCoStore
+        & componentPullbackEvent fst
+    wifi :: Component (Int, Maybe Text) (Store (Maybe Text))
+    wifi =
+      wifiComponent & componentMapAction stateToCoStore
+        & componentPullbackEvent snd

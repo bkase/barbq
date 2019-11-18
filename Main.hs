@@ -33,11 +33,13 @@ import Control.Monad.Catch (MonadCatch, MonadMask, MonadThrow)
 import Control.Monad.Co
 import Control.Monad.IO.Unlift
 import Data.Semigroup ((<>))
+import Data.Text.Lazy
+import Data.Text.Lazy.Read
 import Graphics.Vty ((<|>), blue, defAttr, green, mkVty, nextEvent, picForImage, shutdown, standardIOConfig, string, text, update, withBackColor, withForeColor)
-import Pipes ((>->), Consumer, Producer, await, runEffect, yield)
+import Pipes ((>->), Consumer, Pipe, Producer, await, runEffect, yield)
 import Pipes.Concurrent (Input, Output, fromInput, latest, newest, spawn, toOutput, unbounded)
 import qualified Pipes.Prelude as P
-import Relude hiding ((<|>))
+import Relude hiding ((<|>), Text)
 import System.Clock
 import UnliftIO.Concurrent (forkIO)
 
@@ -68,6 +70,12 @@ instance MonadShell M where
 
 shell :: Text -> Task Text
 shell = flip ShellTask id
+
+shellInt :: Text -> Task (Maybe Int)
+shellInt s =
+  let taskEither = decimal <$> shell s
+      taskMaybe = rightToMaybe <$> taskEither
+   in fmap fst <$> taskMaybe
 
 runTask :: (MonadIO m, MonadShell m) => Task o -> m o
 runTask (ShellTask s f) = do
@@ -127,44 +135,41 @@ runProvider triggerOutput (Provider freeAp) = minput
 --send "hello"
 app :: M ()
 app = do
+  cfg <- liftIO $ standardIOConfig
+  vty <- liftIO $ mkVty cfg
   -- we send unit to unblock so we can use latest
   (outputU, inputU) <- liftIO $ spawn (newest 1)
   -- (purely) describe the providers
-  let tupled = (\a b c d -> (a, b, c, d)) <$> provide (after 1000 & everyi 2000) (shell "kwm...") "?" <*> provide (after 300 & everyi 1500) (shell "foo..") "?" <*> provide (after 200 & everyi 4000) (shell "bar..") "?" <*> provide (after 20000 & everyi 40000) (shell "bar..") "?"
+  --let tupled = (\a b c d -> (a, b, c, d)) <$> provide (after 1000 & everyi 2000) (shell "kwm...") "?" <*> provide (after 300 & everyi 1500) (shell "foo..") "?" <*> provide (after 200 & everyi 4000) (shell "bar..") "?" <*> provide (after 20000 & everyi 40000) (shell "bar..") "?"
+  let left :: Provider Int = fromMaybe 0 <$> provide (after 1000 & everyi 2000) (shellInt "40") Nothing
+  let right :: Provider (Maybe Text) = provide (after 1000 & everyi 2000) (Just <$> shell "Fly-fi") Nothing
+  let tupled = (,) <$> left <*> right
   -- run the provider
   inputG <- runProvider outputU tupled
+  input <- liftIO $ normalize inputG inputU
+  liftIO $ runRenderM (exploreCo realComponent) vty input
   -- dump provided data to stdout
-  liftIO $ runEffect $ fromInput inputG >-> handler inputU
+  liftIO $ shutdown vty
   where
-    handler :: (Show a) => Input () -> Consumer a IO r
-    handler unitInput = forever $ do
-      lift $ runEffect $ fromInput unitInput >-> await
-      a <- await
-      print a
+    -- Given a "latest" input and a unit trigger, yield a triggered latest
+    normalize :: Input a -> Input () -> IO (Input (Maybe a))
+    normalize latestInput triggerInput = do
+      (output, input) <- spawn (newest 1)
+      _tid <- forkIO $ runEffect $ fromInput latestInput >-> handler triggerInput >-> toOutput output
+      return input
+    handler :: Input () -> Pipe a (Maybe a) IO ()
+    handler triggerInput = loop 0
+      where
+        loop i = do
+          lift $ runEffect $ fromInput triggerInput >-> await
+          a <- await
+          yield (Just a)
+          if i > 10
+            then yield Nothing
+            else loop (i + 1)
 
 runApp :: M () -> IO ()
 runApp (M m) = runReaderT m (Environment 0)
 
 main :: IO ()
-main = do
-  cfg <- standardIOConfig
-  vty <- mkVty cfg
-  -- make the thing
-  (outputU, inputU) <- liftIO $ spawn (newest 1)
-  _tid <- forkIO $ runEffect $ spawnUnit >-> toOutput outputU
-  -- draw stuff
-  runRenderM (exploreCo combinedExample) vty inputU
-  shutdown vty
-  print ("Last event was: " ++ show 3)
-  runApp app
-  where
-    spawnUnit :: Producer (Maybe ()) IO ()
-    spawnUnit = do
-      lift $ threadDelay 1000000
-      yield $ Just ()
-      lift $ threadDelay 1000000
-      yield $ Just ()
-      lift $ threadDelay 1000000
-      yield $ Just ()
-      lift $ threadDelay 1000000
-      yield Nothing
+main = runApp app
