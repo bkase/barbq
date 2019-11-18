@@ -188,7 +188,7 @@ app = do
   (outputU, inputU) <- liftIO $ spawn (newest 1)
   -- (purely) describe the providers
   --let tupled = (\a b c d -> (a, b, c, d)) <$> provide (after 1000 & everyi 2000) (shell "kwm...") "?" <*> provide (after 300 & everyi 1500) (shell "foo..") "?" <*> provide (after 200 & everyi 4000) (shell "bar..") "?" <*> provide (after 20000 & everyi 40000) (shell "bar..") "?"
-  let left :: Provider Int = fromMaybe 0 <$> provide (after 1000 & everyi 2000) (shellInt volumeShell) Nothing
+  let left :: Provider Int = fromMaybe 0 <$> provide (after 0 & everyi 500) (shellInt volumeShell) Nothing
   let right :: Provider (Maybe Text) = provide (after 1000 & everyi 2000) (Just <$> shell wifiShell) Nothing
   let tupled = (,) <$> left <*> right
   -- run the provider
