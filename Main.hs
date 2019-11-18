@@ -12,6 +12,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -41,6 +42,8 @@ import Pipes.Concurrent (Input, Output, fromInput, latest, newest, spawn, toOutp
 import qualified Pipes.Prelude as P
 import Relude hiding ((<|>), Text)
 import System.Clock
+import System.Process (readProcess)
+import Text.RawString.QQ
 import UnliftIO.Concurrent (forkIO)
 
 --class Monad m => MonadChan chan m where
@@ -65,11 +68,55 @@ instance MonadIntervalRunner M where
         yield o
 
 instance MonadShell M where
-  execSh s =
-    liftIO $ return $ s <> ":test"
+  execSh s = do
+    output <- liftIO $ readProcess "/bin/bash" ["-c", unpack s] []
+    return $ pack output
 
+-- use Turtle to make shells?
 shell :: Text -> Task Text
 shell = flip ShellTask id
+
+-- scripts taken from ubersicht status widget via chunkwm sample ubersicht
+volumeShell :: Text
+volumeShell =
+  [r|
+  isMute=$( /usr/bin/osascript -e 'output muted of (get volume settings)' )
+
+  if [ $isMute == "true" ]; then
+    echo "0"
+  else
+    curVolume=$(osascript -e 'output volume of (get volume settings)')
+    echo $curVolume
+  fi
+|]
+
+wifiShell :: Text
+wifiShell =
+  [r|
+  services=$(networksetup -listnetworkserviceorder | grep 'Hardware Port')
+
+while read line; do
+    sname=$(echo $line | awk -F  "(, )|(: )|[)]" '{print $2}')
+    sdev=$(echo $line | awk -F  "(, )|(: )|[)]" '{print $4}')
+    # echo "Current service: $sname, $sdev, $currentservice"
+    if [ -n "$sdev" ]; then
+        ifconfig $sdev 2>/dev/null | grep 'status: active' > /dev/null 2>&1
+        rc="$?"
+        if [ "$rc" -eq 0 ]; then
+            currentservice="$sname"
+	    currentsdev="$sdev"
+            break
+        fi
+    fi
+done <<< "$(echo "$services")"
+
+if [ -n "$currentservice" ] ; then
+    echo "$currentservice@$(networksetup -getairportnetwork $currentsdev | cut -c 24-)@$(networksetup -getinfo "Apple USB Ethernet Adapter" | grep "IP address" | grep "\." | cut -c 13-)"
+else
+    >&1 echo "none@none@"
+    exit 1
+fi
+|]
 
 shellInt :: Text -> Task (Maybe Int)
 shellInt s =
@@ -135,14 +182,14 @@ runProvider triggerOutput (Provider freeAp) = minput
 --send "hello"
 app :: M ()
 app = do
-  cfg <- liftIO $ standardIOConfig
+  cfg <- liftIO standardIOConfig
   vty <- liftIO $ mkVty cfg
   -- we send unit to unblock so we can use latest
   (outputU, inputU) <- liftIO $ spawn (newest 1)
   -- (purely) describe the providers
   --let tupled = (\a b c d -> (a, b, c, d)) <$> provide (after 1000 & everyi 2000) (shell "kwm...") "?" <*> provide (after 300 & everyi 1500) (shell "foo..") "?" <*> provide (after 200 & everyi 4000) (shell "bar..") "?" <*> provide (after 20000 & everyi 40000) (shell "bar..") "?"
-  let left :: Provider Int = fromMaybe 0 <$> provide (after 1000 & everyi 2000) (shellInt "40") Nothing
-  let right :: Provider (Maybe Text) = provide (after 1000 & everyi 2000) (Just <$> shell "Fly-fi") Nothing
+  let left :: Provider Int = fromMaybe 0 <$> provide (after 1000 & everyi 2000) (shellInt volumeShell) Nothing
+  let right :: Provider (Maybe Text) = provide (after 1000 & everyi 2000) (Just <$> shell wifiShell) Nothing
   let tupled = (,) <$> left <*> right
   -- run the provider
   inputG <- runProvider outputU tupled
