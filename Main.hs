@@ -149,7 +149,22 @@ main :: IO ()
 main = do
   cfg <- standardIOConfig
   vty <- mkVty cfg
-  flip runRenderM vty $ exploreCo combinedExample
+  -- make the thing
+  (outputU, inputU) <- liftIO $ spawn (newest 1)
+  _tid <- forkIO $ runEffect $ spawnUnit >-> toOutput outputU
+  -- draw stuff
+  runRenderM (exploreCo combinedExample) vty inputU
   shutdown vty
   print ("Last event was: " ++ show 3)
   runApp app
+  where
+    spawnUnit :: Producer (Maybe ()) IO ()
+    spawnUnit = do
+      lift $ threadDelay 1000000
+      yield $ Just ()
+      lift $ threadDelay 1000000
+      yield $ Just ()
+      lift $ threadDelay 1000000
+      yield $ Just ()
+      lift $ threadDelay 1000000
+      yield Nothing

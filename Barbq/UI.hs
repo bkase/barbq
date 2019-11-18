@@ -26,9 +26,11 @@ import Control.Comonad (Comonad, duplicate, extract)
 import Control.Comonad.Store
 import Control.Comonad.Traced
 import Control.Monad.Co
-import Control.Monad.Writer (Writer, WriterT (..), runWriter, tell)
+import Control.Monad.Writer (Writer, WriterT (..), mapWriter, runWriter, tell)
 import Data.Functor.Day
-import Graphics.Vty
+import Graphics.Vty hiding (Event, Input)
+import Pipes ((>->), Consumer, Effect, Producer, await, runEffect, yield)
+import Pipes.Concurrent (Input, fromInput)
 import Relude hiding ((<|>))
 
 type Pairing f g = forall a b c. (a -> b -> c) -> f a -> g b -> c
@@ -47,32 +49,47 @@ pairDay p1 p2 f (Day f1 g1 g) (Day f2 g2 h) =
 
 type SendResult s = Endo s
 
-type Responder s = Event -> SendResult s
+type Responder e s = e -> SendResult s
 
 newtype RenderM a = RenderM (ReaderT Vty IO a)
   deriving (Functor, Applicative, Monad, MonadReader Vty, MonadIO)
 
-runRenderM :: RenderM () -> Vty -> IO ()
-runRenderM (RenderM rm) = runReaderT rm
+runRenderM :: Consumer e RenderM () -> Vty -> Input e -> IO ()
+runRenderM crm vty input = runReaderT m vty
+  where
+    m :: ReaderT Vty IO ()
+    (RenderM m) = runEffect $ fromInput input >-> crm
 
 type Handler a s = a -> SendResult s
 
 -- a picture and function that reacts to events
-newtype UI a = UI (forall s. (Handler a s -> WriterT (Responder s) Identity Image))
+newtype UI e a = UI (forall s. (Handler a s -> WriterT (Responder e s) Identity Image))
 
-type Component' w m = w (UI (m ()))
+type Component' e w m = w (UI e (m ()))
 
-type Component w = Component' w (Co w)
+type Component e w = Component' e w (Co w)
 
 componentMapAction
-  :: forall m1 m2 w. Functor w
+  :: forall m1 m2 w e. Functor w
   => (m1 () -> m2 ())
-  -> Component' w m1
-  -> Component' w m2
+  -> Component' e w m1
+  -> Component' e w m2
 componentMapAction f = fmap transformUi
   where
-    transformUi :: UI (m1 ()) -> UI (m2 ())
+    transformUi :: UI e (m1 ()) -> UI e (m2 ())
     transformUi (UI ui) = UI $ \send -> ui (send <<< f)
+
+componentPullbackEvent
+  :: forall m w e1 e2. Functor w
+  => (e2 -> e1)
+  -> Component' e1 w m
+  -> Component' e2 w m
+componentPullbackEvent f = fmap transformEvent
+  where
+    transformEvent :: UI e1 (m ()) -> UI e2 (m ())
+    transformEvent (UI ui) = UI $ \send -> mapWriter writerMap (ui send)
+    writerMap :: (Image, Responder e1 s) -> (Image, Responder e2 s)
+    writerMap (img, r) = (img, \e2 -> r (f e2))
 
 stateToCoStore :: forall f g a s. State s a -> Co (Store s) a
 stateToCoStore state = co (story state)
@@ -103,32 +120,40 @@ pairWriterTraced :: forall f g s. Pairing f g -> Pairing (WriterT s f) (TracedT 
 pairWriterTraced pairing f (WriterT writer) (TracedT gf) =
   pairing (\(a, w) f1 -> f a (f1 w)) writer gf
 
-explore :: forall w m. Comonad w => Pairing m w -> Component' w m -> RenderM ()
+explore :: forall w m e. Comonad w => Pairing m w -> Component' e w m -> Consumer (Maybe e) RenderM ()
 explore pair space = do
-  vty <- ask
+  vty <- lift ask
   let (img, runner) = let { (UI ui) = extract space } in runWriter (ui send)
   let pic = picForImage img
+  bounds <- liftIO $ outputIface vty & displayBounds
+  liftIO $ print bounds
   liftIO $ update vty pic
-  e <- liftIO $ nextEvent vty
-  explore pair (appEndo (runner e) space)
+  -- TODO: Keystrokes
+  -- e <- liftIO $ nextEvent vty
+  e <- await
+  case e of
+    Nothing -> return ()
+    Just e -> explore pair (appEndo (runner e) space)
   where
-    send :: m () -> SendResult (Component' w m)
+    send :: m () -> SendResult (Component' e w m)
     send action =
-      Endo (pair (const id) action <<< duplicate)
+      Endo $ pair (const id) action <<< duplicate
+    doEffect :: forall m'. Monad  m' => Effect  m' e ->  m' e
+    doEffect = runEffect
 
-exploreCo :: forall w. Comonad w => Component w -> RenderM ()
+exploreCo :: forall w e. Comonad w => Component e w -> Consumer (Maybe e) RenderM ()
 exploreCo = explore (pairSym pairCo)
 
 combine
-  :: forall w1 w2. Comonad w1
+  :: forall w1 w2 e. Comonad w1
   => Comonad w2
-  => (forall a. UI a -> UI a -> UI a)
-  -> Component w1
-  -> Component w2
-  -> Component (Day w1 w2)
+  => (forall a. UI e a -> UI e a -> UI e a)
+  -> Component e w1
+  -> Component e w2
+  -> Component e (Day w1 w2)
 combine with w1 = day (build <$> w1)
   where
-    build :: UI (Co w1 ()) -> UI (Co w2 ()) -> UI (Co (Day w1 w2) ())
+    build :: UI e (Co w1 ()) -> UI e (Co w2 ()) -> UI e (Co (Day w1 w2) ())
     build (UI render1) (UI render2) =
       with (UI (\send -> render1 $ \co -> send (liftLeft co)))
         (UI (\send -> render2 $ \co -> send (liftRight co)))
@@ -147,13 +172,13 @@ instance Semigroup AddingInt where
 instance Monoid AddingInt where
   mempty = AddingInt 0
 
-tracedExample :: Component' (Traced AddingInt) (Writer AddingInt)
+tracedExample :: Component' e (Traced AddingInt) (Writer AddingInt)
 tracedExample = traced render
   where
-    render :: AddingInt -> UI (Writer AddingInt ())
+    render :: AddingInt -> UI e (Writer AddingInt ())
     render (AddingInt count) = UI $ \send -> do
       let line0 = text (defAttr `withForeColor` green) ("Traced " <> show count <> " line")
-          line1 = string (defAttr `withBackColor` blue) "second line"
+          line1 = string (defAttr `withBackColor` blue) "x"
           img = line0 <|> line1
       () <-
         tell $ const
@@ -162,30 +187,32 @@ tracedExample = traced render
             else Endo id
       return img
 
-storeExample :: Component' (Store Int) (State Int)
+storeExample :: Component' e (Store Int) (State Int)
 storeExample = store render 0
   where
-    render :: Int -> UI (State Int ())
+    render :: Int -> UI e (State Int ())
     render count = UI $ \send -> do
       let line0 = text (defAttr `withForeColor` green) ("Store " <> show count <> " line")
-          line1 = string (defAttr `withBackColor` blue) "second line"
+          line1 = string (defAttr `withBackColor` blue) "x"
           img = line0 <|> line1
       () <-
         tell $ const
           $ if count < 3
             then send (modify (+ 1))
             else Endo id
-      return img
+      return $ img & resizeWidth 20 & translateX 3
 
-combinedExample :: Component (Day (Store Int) (Traced AddingInt))
+combinedExample :: forall e. Component e (Day (Store Int) (Traced AddingInt))
 combinedExample = combine with store traced
   where
-    with :: forall a. UI a -> UI a -> UI a
+    with :: forall a. UI e a -> UI e a -> UI e a
     with (UI ui1) (UI ui2) = UI $ \send -> do
       pic1 <- ui1 send
       pic2 <- ui2 send
+      --let w1 = imageWidth pic1
+      --let w2 = imageWidth pic2
       return $ pic1 <|> pic2
-    traced :: Component (Traced AddingInt)
+    traced :: Component e (Traced AddingInt)
     traced = componentMapAction writerToCoTraced tracedExample
-    store :: Component (Store Int)
+    store :: Component e (Store Int)
     store = componentMapAction stateToCoStore storeExample
