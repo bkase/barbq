@@ -35,7 +35,7 @@ import Data.Text.Lazy hiding (foldr, intersperse, take)
 import Graphics.Vty hiding (Event, Input)
 import Pipes ((>->), Consumer, Effect, Producer, await, runEffect, yield)
 import Pipes.Concurrent (Input, fromInput)
-import Relude hiding ((<|>), Text)
+import Relude hiding ((<|>), Text, filter)
 
 type Pairing f g = forall a b c. (a -> b -> c) -> f a -> g b -> c
 
@@ -51,10 +51,6 @@ pairDay p1 p2 f (Day f1 g1 g) (Day f2 g2 h) =
    in let (y1, y2) = p2 (,) g1 g2
        in f (g x1 y1) (h x2 y2)
 
-type SendResult s = Endo s
-
-type Responder e s = e -> SendResult s
-
 newtype RenderM a = RenderM (ReaderT Vty IO a)
   deriving (Functor, Applicative, Monad, MonadReader Vty, MonadIO)
 
@@ -64,10 +60,13 @@ runRenderM crm vty input = runReaderT m vty
     m :: ReaderT Vty IO ()
     (RenderM m) = runEffect $ fromInput input >-> crm
 
+type SendResult s = Endo s
+
+type Responder e s = e -> SendResult s
+
 type Handler a s = a -> SendResult s
 
--- a picture and function that reacts to events
-newtype UI e v a = UI (forall s. (Handler a s -> WriterT (Responder e s) Identity v))
+newtype UI e v a = UI (forall s. (Handler a s -> Writer (Responder e s) v))
 
 type Component' e v w m = w (UI e v (m ()))
 
@@ -245,13 +244,10 @@ type PureBarbqComponent e = Component' e Image (Store e) (State e)
 volumeComponent :: PureBarbqComponent Int
 volumeComponent = pureProvidedComponent 0 $ do
   volume <- ask
-  return $ text defAttr $ emoji volume <> " " <> show volume
+  return $ text defAttr $ emoji volume <> show volume
   where
-    emoji 0 = "🔇"
-    emoji i
-      | i < 33 = "🔈"
-      | i >= 33 && i < 66 = "🔉"
-      | i >= 66 = "🔉"
+    emoji 0 = "\xf466  "
+    emoji i = "\xf485  "
 
 tabsComponent :: PureBarbqComponent (Maybe PointedFinSet)
 tabsComponent = pureProvidedComponent Nothing $ do
@@ -261,22 +257,22 @@ tabsComponent = pureProvidedComponent Nothing $ do
     build :: Int -> Int -> [(Int, Attr)]
     build i point = (i, if point == i then defAttr `withBackColor` blue else defAttr) : build (i + 1) point
     render :: (Int, Attr) -> Image
-    render (i, attr) = text attr (show i)
+    render (i, attr) = text attr $ " " <> (show i) <> " "
     draw :: Maybe PointedFinSet -> Image
     draw Nothing = text defAttr ""
     draw (Just tabs) =
       let { list = take (maxSet tabs) (build 1 $ point tabs) }
        in list & fmap render
-            & intersperse (text defAttr " ")
+            -- & intersperse (text defAttr " ")
             & foldr (\x acc -> x <|> acc) (text defAttr "")
 
 wifiComponent :: PureBarbqComponent (Maybe Text)
 wifiComponent = pureProvidedComponent Nothing $ do
   ssid <- ask
-  return $ text defAttr $ emoji ssid
+  return $ text defAttr $ "\xf012  " <> emoji ssid
   where
-    emoji Nothing = "X No wifi"
-    emoji (Just name) = "> " <> name
+    emoji Nothing = "Unknown"
+    emoji (Just name) = filter (/= '\n') name
 
 -- TODO: How to typelevel fold over '[A, B, C] for less boiler platyness
 type Day3 f g h = Day f (Day g h)

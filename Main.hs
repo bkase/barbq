@@ -35,7 +35,6 @@ import Control.Monad.Co
 import Control.Monad.IO.Unlift
 import Data.Semigroup ((<>))
 import Data.Text.Lazy
-import Data.Text.Lazy.Read
 import Graphics.Vty ((<|>), blue, defAttr, green, mkVty, nextEvent, picForImage, shutdown, standardIOConfig, string, text, update, withBackColor, withForeColor)
 import Pipes ((>->), Consumer, Pipe, Producer, await, runEffect, yield)
 import Pipes.Concurrent (Input, Output, fromInput, latest, newest, spawn, toOutput, unbounded)
@@ -43,6 +42,9 @@ import qualified Pipes.Prelude as P
 import Relude hiding ((<|>), Text)
 import System.Clock
 import System.Process (readProcess)
+import Text.Megaparsec
+import Text.Megaparsec.Char (char)
+import Text.Megaparsec.Char.Lexer (decimal)
 import Text.RawString.QQ
 import UnliftIO.Concurrent (forkIO)
 
@@ -72,9 +74,17 @@ instance MonadShell M where
     output <- liftIO $ readProcess "/bin/bash" ["-c", unpack s] []
     return $ pack output
 
--- use Turtle to make shells?
 shell :: Text -> Task Text
 shell = flip ShellTask id
+
+tilingShell :: Text
+tilingShell =
+  [r|
+  desktops=$(chunkc tiling::query -D $(chunkc tiling::query -m id))
+  current=$(/usr/local/bin/chunkc tiling::query -d id)
+
+  echo "$current,${desktops: -1}"
+|]
 
 -- scripts taken from ubersicht status widget via chunkwm sample ubersicht
 volumeShell :: Text
@@ -111,18 +121,22 @@ while read line; do
 done <<< "$(echo "$services")"
 
 if [ -n "$currentservice" ] ; then
-    echo "$currentservice@$(networksetup -getairportnetwork $currentsdev | cut -c 24-)@$(networksetup -getinfo "Apple USB Ethernet Adapter" | grep "IP address" | grep "\." | cut -c 13-)"
+    echo -n "$currentservice: $(networksetup -getairportnetwork $currentsdev | cut -c 24-)"
 else
-    >&1 echo "none@none@"
+    >&1 echo -n "Unknown"
     exit 1
 fi
 |]
 
 shellInt :: Text -> Task (Maybe Int)
 shellInt s =
-  let taskEither = decimal <$> shell s
-      taskMaybe = rightToMaybe <$> taskEither
-   in fmap fst <$> taskMaybe
+  runParser <$> shell s
+  where
+    runParser :: Text -> Maybe Int
+    runParser s = rightToMaybe $ parse parser "" s
+      where
+        parser :: Parser Int
+        parser = decimal
 
 runTask :: (MonadIO m, MonadShell m) => Task o -> m o
 runTask (ShellTask s f) = do
@@ -169,17 +183,23 @@ runProvider triggerOutput (Provider freeAp) = minput
     task :: ProviderAtom a -> Task a
     task = view providerTask
 
--- TODO
--- type UI a = (a -> Widget ()
+type Parser = Parsec Void Text
 
---type Component w = w (UI (Co w ()))
+tabsTask :: Task (Maybe PointedFinSet)
+tabsTask = fmap (uncurry mkPointedFinSet) <$> fixed
+  where
+    fixed :: Task (Maybe (Int, Int))
+    fixed = untext <$> shell tilingShell
+    untext :: Text -> Maybe (Int, Int)
+    untext s = rightToMaybe $ parse numbers "" s
+      where
+        numbers :: Parser (Int, Int)
+        numbers = do
+          point <- decimal
+          _ <- char ','
+          max <- decimal
+          pure (point, max)
 
---counter :: Component (Store Int)
---counter = store render 0
---where
---render :: Int -> UI (Co (Store Int) ())
---render count send =
---send "hello"
 app :: M ()
 app = do
   cfg <- liftIO standardIOConfig
@@ -188,9 +208,9 @@ app = do
   (outputU, inputU) <- liftIO $ spawn (newest 1)
   -- (purely) describe the providers
   let volumeData :: Provider Int = fromMaybe 0 <$> provide (after 0 & everyi 500) (shellInt volumeShell) Nothing
-  let wifiData :: Provider (Maybe Text) = provide (after 1000 & everyi 2000) (Just <$> shell wifiShell) Nothing
-  let tabsData :: Provider (Maybe PointedFinSet) = provide (after 0 & everyi 2000) (let { base = shell "echo ''" } in let { fixed = const (2, 5) <$> base } in Just . uncurry mkPointedFinSet <$> fixed) Nothing
-  let tupled = (\a b c -> (a, b, c)) <$> tabsData <*> volumeData <*> wifiData
+  let wifiData :: Provider (Maybe Text) = provide (after 0 & everyi 2000) (Just <$> shell wifiShell) Nothing
+  let tabsData :: Provider (Maybe PointedFinSet) = provide (after 0 & everyi 50) tabsTask Nothing
+  let tupled = (,,) <$> tabsData <*> volumeData <*> wifiData
   -- run the provider
   inputG <- runProvider outputU tupled
   input <- liftIO $ normalize inputG inputU
@@ -211,7 +231,7 @@ app = do
           lift $ runEffect $ fromInput triggerInput >-> await
           a <- await
           yield (Just a)
-          if i > 10
+          if i > 200
             then yield Nothing
             else loop (i + 1)
 
