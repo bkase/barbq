@@ -187,9 +187,10 @@ app = do
   -- we send unit to unblock so we can use latest
   (outputU, inputU) <- liftIO $ spawn (newest 1)
   -- (purely) describe the providers
-  let left :: Provider Int = fromMaybe 0 <$> provide (after 0 & everyi 500) (shellInt volumeShell) Nothing
-  let right :: Provider (Maybe Text) = provide (after 1000 & everyi 2000) (Just <$> shell wifiShell) Nothing
-  let tupled = (,) <$> left <*> right
+  let volumeData :: Provider Int = fromMaybe 0 <$> provide (after 0 & everyi 500) (shellInt volumeShell) Nothing
+  let wifiData :: Provider (Maybe Text) = provide (after 1000 & everyi 2000) (Just <$> shell wifiShell) Nothing
+  let tabsData :: Provider (Maybe PointedFinSet) = provide (after 0 & everyi 2000) (let { base = shell "echo ''" } in let { fixed = const (2, 5) <$> base } in Just . uncurry mkPointedFinSet <$> fixed) Nothing
+  let tupled = (\a b c -> (a, b, c)) <$> tabsData <*> volumeData <*> wifiData
   -- run the provider
   inputG <- runProvider outputU tupled
   input <- liftIO $ normalize inputG inputU

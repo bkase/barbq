@@ -24,13 +24,14 @@ module Barbq.UI
     )
 where
 
+import Barbq.Types
 import Control.Comonad (Comonad, duplicate, extract)
 import Control.Comonad.Store
 import Control.Comonad.Traced
 import Control.Monad.Co
 import Control.Monad.Writer (Writer, WriterT (..), mapWriter, runWriter, tell)
 import Data.Functor.Day
-import Data.Text.Lazy
+import Data.Text.Lazy hiding (foldr, intersperse, take)
 import Graphics.Vty hiding (Event, Input)
 import Pipes ((>->), Consumer, Effect, Producer, await, runEffect, yield)
 import Pipes.Concurrent (Input, fromInput)
@@ -239,7 +240,9 @@ pureProvidedComponent z draw = store render z
       () <- tell $ \e -> send (put e)
       return v
 
-volumeComponent :: Component' Int Image (Store Int) (State Int)
+type PureBarbqComponent e = Component' e Image (Store e) (State e)
+
+volumeComponent :: PureBarbqComponent Int
 volumeComponent = pureProvidedComponent 0 $ do
   volume <- ask
   return $ text defAttr $ emoji volume <> " " <> show volume
@@ -250,7 +253,24 @@ volumeComponent = pureProvidedComponent 0 $ do
       | i >= 33 && i < 66 = "🔉"
       | i >= 66 = "🔉"
 
-wifiComponent :: Component' (Maybe Text) Image (Store (Maybe Text)) (State (Maybe Text))
+tabsComponent :: PureBarbqComponent (Maybe PointedFinSet)
+tabsComponent = pureProvidedComponent Nothing $ do
+  tabs <- ask
+  pure $ draw tabs
+  where
+    build :: Int -> Int -> [(Int, Attr)]
+    build i point = (i, if point == i then defAttr `withBackColor` blue else defAttr) : build (i + 1) point
+    render :: (Int, Attr) -> Image
+    render (i, attr) = text attr (show i)
+    draw :: Maybe PointedFinSet -> Image
+    draw Nothing = text defAttr ""
+    draw (Just tabs) =
+      let { list = take (maxSet tabs) (build 1 $ point tabs) }
+       in list & fmap render
+            & intersperse (text defAttr " ")
+            & foldr (\x acc -> x <|> acc) (text defAttr "")
+
+wifiComponent :: PureBarbqComponent (Maybe Text)
 wifiComponent = pureProvidedComponent Nothing $ do
   ssid <- ask
   return $ text defAttr $ emoji ssid
@@ -258,8 +278,11 @@ wifiComponent = pureProvidedComponent Nothing $ do
     emoji Nothing = "X No wifi"
     emoji (Just name) = "> " <> name
 
-realComponent :: Component (Int, Maybe Text) Image (Day (Store Int) (Store (Maybe Text)))
-realComponent = combine with volume wifi
+-- TODO: How to typelevel fold over '[A, B, C] for less boiler platyness
+type Day3 f g h = Day f (Day g h)
+
+realComponent :: Component (Maybe PointedFinSet, Int, Maybe Text) Image (Day3 (Store (Maybe PointedFinSet)) (Store Int) (Store (Maybe Text)))
+realComponent = combine with tabs (combine with volume wifi)
   where
     with :: forall e a. UI e Image a -> UI e Image a -> UI e Image a
     with (UI ui1) (UI ui2) = UI $ \send -> do
@@ -268,11 +291,15 @@ realComponent = combine with volume wifi
       --let w1 = imageWidth pic1
       --let w2 = imageWidth pic2
       return $ pic1 <|> string defAttr "   " <|> pic2
-    volume :: Component (Int, Maybe Text) Image (Store Int)
+    tabs :: forall a b. Component (Maybe PointedFinSet, a, b) Image (Store (Maybe PointedFinSet))
+    tabs =
+      tabsComponent & componentMapAction stateToCoStore
+        & componentPullbackEvent (\(x, a, b) -> x)
+    volume :: forall a b. Component (a, Int, b) Image (Store Int)
     volume =
       volumeComponent & componentMapAction stateToCoStore
-        & componentPullbackEvent fst
-    wifi :: Component (Int, Maybe Text) Image (Store (Maybe Text))
+        & componentPullbackEvent (\(a, x, b) -> x)
+    wifi :: forall a b. Component (a, b, Maybe Text) Image (Store (Maybe Text))
     wifi =
       wifiComponent & componentMapAction stateToCoStore
-        & componentPullbackEvent snd
+        & componentPullbackEvent (\(a, b, x) -> x)

@@ -17,7 +17,11 @@ module Barbq.Types
     providerConf,
     providerDefault,
     providerTask,
-    Provider (..)
+    Provider (..),
+    PointedFinSet,
+    point,
+    maxSet,
+    mkPointedFinSet
     )
 where
 
@@ -70,3 +74,15 @@ makeLenses ''ProviderAtom
 
 newtype Provider a = Provider (A.Ap ProviderAtom a)
   deriving (Functor, Applicative)
+
+-- Models
+newtype PointedFinSet = PointedFinSet (Int, Int)
+
+mkPointedFinSet :: Int -> Int -> PointedFinSet
+mkPointedFinSet point max = PointedFinSet (point, max)
+
+point :: PointedFinSet -> Int
+point (PointedFinSet tuple) = fst tuple
+
+maxSet :: PointedFinSet -> Int
+maxSet (PointedFinSet tuple) = snd tuple
