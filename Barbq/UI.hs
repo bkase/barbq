@@ -20,6 +20,9 @@ module Barbq.UI
     pairDay,
     runRenderM,
     realComponent,
+    componentMapView,
+    componentMapAction,
+    componentPullbackEvent,
     Pairing
     )
 where
@@ -33,7 +36,7 @@ import Control.Monad.Writer (Writer, WriterT (..), mapWriter, runWriter, tell)
 import Data.Functor.Day
 import Data.Text.Lazy hiding (foldr, intersperse, take)
 import Graphics.Vty hiding (Event, Input)
-import Pipes ((>->), Consumer, Effect, Producer, await, runEffect, yield)
+import Pipes ((>->), Consumer, await, runEffect)
 import Pipes.Concurrent (Input, fromInput)
 import Relude hiding ((<|>), Text, filter)
 
@@ -48,8 +51,8 @@ pairSym pairing f ga fb = pairing (flip f) fb ga
 pairDay :: forall f1 f2 g1 g2. Pairing f1 f2 -> Pairing g1 g2 -> Pairing (Day f1 g1) (Day f2 g2)
 pairDay p1 p2 f (Day f1 g1 g) (Day f2 g2 h) =
   let (x1, x2) = p1 (,) f1 f2
-   in let (y1, y2) = p2 (,) g1 g2
-       in f (g x1 y1) (h x2 y2)
+      (y1, y2) = p2 (,) g1 g2
+   in f (g x1 y1) (h x2 y2)
 
 newtype RenderM a = RenderM (ReaderT Vty IO a)
   deriving (Functor, Applicative, Monad, MonadReader Vty, MonadIO)
@@ -104,7 +107,7 @@ componentPullbackEvent f = fmap transformUi
     writerMap :: (v, Responder e1 s) -> (v, Responder e2 s)
     writerMap (img, r) = (img, r <<< f)
 
-stateToCoStore :: forall f g a s. State s a -> Co (Store s) a
+stateToCoStore :: forall a s. State s a -> Co (Store s) a
 stateToCoStore state = co (story state)
   where
     story :: forall r. State s a -> Store s (a -> r) -> r
@@ -113,7 +116,7 @@ stateToCoStore state = co (story state)
        in let { (a, s') = runState state s }
            in render s' a
 
-writerToCoTraced :: forall f g a s. Monoid s => Writer s a -> Co (Traced s) a
+writerToCoTraced :: forall a s. Writer s a -> Co (Traced s) a
 writerToCoTraced writer = co (tracer writer)
   where
     tracer :: forall r. Writer s a -> Traced s (a -> r) -> r
@@ -138,7 +141,7 @@ explore pair space = do
   vty <- lift ask
   let (img, runner) = let { (UI ui) = extract space } in runWriter (ui send)
   let pic = picForImage img
-  bounds <- liftIO $ outputIface vty & displayBounds
+  _bounds <- liftIO $ outputIface vty & displayBounds
   --liftIO $ print bounds
   liftIO $ update vty pic
   -- TODO: Keystrokes
@@ -151,10 +154,8 @@ explore pair space = do
     send :: forall v. m () -> SendResult (Component' e v w m)
     send action =
       Endo $ pair (const id) action <<< duplicate
-    doEffect :: forall m'. Monad  m' => Effect  m' e ->  m' e
-    doEffect = runEffect
 
-exploreCo :: forall w e v. Comonad w => Component e Image w -> Consumer (Maybe e) RenderM ()
+exploreCo :: forall w e. Comonad w => Component e Image w -> Consumer (Maybe e) RenderM ()
 exploreCo = explore (pairSym pairCo)
 
 combine
@@ -247,7 +248,7 @@ volumeComponent = pureProvidedComponent 0 $ do
   return $ text defAttr $ emoji volume <> show volume
   where
     emoji 0 = "\xf466  "
-    emoji i = "\xf485  "
+    emoji _ = "\xf485  "
 
 tabsComponent :: PureBarbqComponent (Maybe PointedFinSet)
 tabsComponent = pureProvidedComponent Nothing $ do
@@ -290,12 +291,12 @@ realComponent = combine with tabs (combine with volume wifi)
     tabs :: forall a b. Component (Maybe PointedFinSet, a, b) Image (Store (Maybe PointedFinSet))
     tabs =
       tabsComponent & componentMapAction stateToCoStore
-        & componentPullbackEvent (\(x, a, b) -> x)
+        & componentPullbackEvent (\(x, _, _) -> x)
     volume :: forall a b. Component (a, Int, b) Image (Store Int)
     volume =
       volumeComponent & componentMapAction stateToCoStore
-        & componentPullbackEvent (\(a, x, b) -> x)
+        & componentPullbackEvent (\(_, x, _) -> x)
     wifi :: forall a b. Component (a, b, Maybe Text) Image (Store (Maybe Text))
     wifi =
       wifiComponent & componentMapAction stateToCoStore
-        & componentPullbackEvent (\(a, b, x) -> x)
+        & componentPullbackEvent (\(_, _, x) -> x)

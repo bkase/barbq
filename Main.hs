@@ -27,20 +27,15 @@ import Barbq.UI
 import Control.Applicative.Free as A
 import Control.Comonad.Store
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (async)
 import Control.Concurrent.Async.Timer (Timer, TimerConf, defaultConf, setInitDelay, setInterval, wait, withAsyncTimer)
 import Control.Lens
-import Control.Monad.Catch (MonadCatch, MonadMask, MonadThrow)
-import Control.Monad.Co
 import Control.Monad.IO.Unlift
 import Data.Semigroup ((<>))
 import Data.Text.Lazy
-import Graphics.Vty ((<|>), blue, defAttr, green, mkVty, nextEvent, picForImage, shutdown, standardIOConfig, string, text, update, withBackColor, withForeColor)
-import Pipes ((>->), Consumer, Pipe, Producer, await, runEffect, yield)
-import Pipes.Concurrent (Input, Output, fromInput, latest, newest, spawn, toOutput, unbounded)
-import qualified Pipes.Prelude as P
+import Graphics.Vty (mkVty, shutdown, standardIOConfig)
+import Pipes ((>->), Pipe, Producer, await, runEffect, yield)
+import Pipes.Concurrent (Input, Output, fromInput, latest, newest, spawn, toOutput)
 import Relude hiding ((<|>), Text)
-import System.Clock
 import System.Process (readProcess)
 import Text.Megaparsec
 import Text.Megaparsec.Char (char)
@@ -48,11 +43,18 @@ import Text.Megaparsec.Char.Lexer (decimal)
 import Text.RawString.QQ
 import UnliftIO.Concurrent (forkIO)
 
---class Monad m => MonadChan chan m where
---newChan :: Int -> m (chan a)
----- these block
---writeChan :: chan a -> a -> m ()
---readChan :: chan a -> m a
+-- Mtl typeclasses
+class Monad m => MonadIntervalRunner (m :: * -> *) where
+
+  start :: forall o. TimerConf -> Output () -> m o -> o -> m (Input o)
+
+class Monad m => MonadShell m where
+
+  execSh :: Text -> m Text
+
+  default execSh :: (MonadTrans t, MonadShell m1, m ~ t m1) => Text -> m Text
+  execSh = lift . execSh
+
 instance MonadIntervalRunner M where
   start :: forall o. TimerConf -> Output () -> M o -> o -> M (Input o)
   start conf triggerOutput task z = do
@@ -133,6 +135,7 @@ runTask :: (MonadIO m, MonadShell m) => Task o -> m o
 runTask (ShellTask s f) = do
   liftIO $ threadDelay 100000
   f <$> execSh s
+runTask (NopTask a) = return a
 
 newtype ProviderRuntime m a = ProviderRuntime (m (Input a))
   deriving (Functor)
@@ -140,7 +143,7 @@ newtype ProviderRuntime m a = ProviderRuntime (m (Input a))
 instance Applicative (ProviderRuntime M) where
 
   pure a = ProviderRuntime $ do
-    (output, input) <- liftIO $ spawn (latest a)
+    (_output, input) <- liftIO $ spawn (latest a)
     return input
 
   liftA2 f (ProviderRuntime ma) (ProviderRuntime mb) = ProviderRuntime $ do
@@ -218,6 +221,7 @@ app = do
     handler :: Input () -> Pipe a (Maybe a) IO ()
     handler triggerInput = loop 0
       where
+        loop :: Int -> Pipe a (Maybe a) IO ()
         loop i = do
           lift $ runEffect $ fromInput triggerInput >-> await
           a <- await

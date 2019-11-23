@@ -18,7 +18,7 @@ extra-source-files:  CHANGELOG.md
 
 executable barbq2
   main-is:             Main.hs
-  ghc-options: -O2 -flate-specialise -fspecialise-aggressively -threaded
+  ghc-options: -O2 -flate-specialise -fspecialise-aggressively -threaded -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints -Wno-name-shadowing
   other-modules: Barbq.Types Barbq.UI
   other-extensions:
     DataKinds
