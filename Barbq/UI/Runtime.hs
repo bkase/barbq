@@ -52,7 +52,7 @@ explore pair space = do
     Nothing -> return ()
     Just e -> explore pair (appEndo (runner e) space)
   where
-    send :: forall v. m () -> SendResult (Component' w m e v)
+    send :: forall v. m () -> Endo (Component' w m e v)
     send action =
       Endo $ over Component' $ pair (const id) action <<< duplicate
 
