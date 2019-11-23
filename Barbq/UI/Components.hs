@@ -13,21 +13,22 @@ import Barbq.UI.Framework
 import Control.Comonad.Store (Store, store)
 import Control.Monad.Writer
 import Data.Functor.Day
+import Data.Profunctor
 import Data.Text.Lazy (Text, filter)
 import qualified Graphics.Vty as V
 import Graphics.Vty ((<|>))
 import Relude hiding ((<|>), Text, filter)
 
-pureProvidedComponent :: forall e v. e -> Reader e v -> Component' e v (Store e) (State e)
-pureProvidedComponent z draw = store render z
+pureProvidedComponent :: forall e v. e -> Reader e v -> Component' (Store e) (State e) e v
+pureProvidedComponent z draw = Component' $ store render z
   where
-    render :: e -> UI e v (State e ())
+    render :: e -> UI (State e ()) e v
     render e = UI $ \send -> do
       let v = runReader draw e
       () <- tell $ \e -> send (put e)
       return v
 
-type PureBarbqComponent e = Component' e V.Image (Store e) (State e)
+type PureBarbqComponent e = Component' (Store e) (State e) e V.Image
 
 volumeComponent :: PureBarbqComponent Int
 volumeComponent = pureProvidedComponent 0 $ do
@@ -62,25 +63,25 @@ wifiComponent = pureProvidedComponent Nothing $ do
 -- TODO: How to typelevel fold over '[A, B, C] for less boiler platyness
 type Day3 f g h = Day f (Day g h)
 
-realComponent :: Component (Maybe PointedFinSet, Int, Maybe Text) V.Image (Day3 (Store (Maybe PointedFinSet)) (Store Int) (Store (Maybe Text)))
+realComponent :: Component (Day3 (Store (Maybe PointedFinSet)) (Store Int) (Store (Maybe Text))) (Maybe PointedFinSet, Int, Maybe Text) V.Image
 realComponent = combine with tabs (combine with volume wifi)
   where
-    with :: forall e a. UI e V.Image a -> UI e V.Image a -> UI e V.Image a
+    with :: forall e a. UI a e V.Image -> UI a e V.Image -> UI a e V.Image
     with (UI ui1) (UI ui2) = UI $ \send -> do
       pic1 <- ui1 send
       pic2 <- ui2 send
       --let w1 = imageWidth pic1
       --let w2 = imageWidth pic2
       return $ pic1 <|> V.string V.defAttr "   " <|> pic2
-    tabs :: forall a b. Component (Maybe PointedFinSet, a, b) V.Image (Store (Maybe PointedFinSet))
+    tabs :: forall a b. Component (Store (Maybe PointedFinSet)) (Maybe PointedFinSet, a, b) V.Image
     tabs =
       tabsComponent & componentMapAction stateToCoStore
-        & componentPullbackEvent (\(x, _, _) -> x)
-    volume :: forall a b. Component (a, Int, b) V.Image (Store Int)
+        & lmap (\(x, _, _) -> x)
+    volume :: forall a b. Component (Store Int) (a, Int, b) V.Image
     volume =
       volumeComponent & componentMapAction stateToCoStore
-        & componentPullbackEvent (\(_, x, _) -> x)
-    wifi :: forall a b. Component (a, b, Maybe Text) V.Image (Store (Maybe Text))
+        & lmap (\(_, x, _) -> x)
+    wifi :: forall a b. Component (Store (Maybe Text)) (a, b, Maybe Text) V.Image
     wifi =
       wifiComponent & componentMapAction stateToCoStore
-        & componentPullbackEvent (\(_, _, x) -> x)
+        & lmap (\(_, _, x) -> x)

@@ -1,7 +1,11 @@
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 
 module Barbq.UI.Framework
   ( pairStateStore,
@@ -10,12 +14,10 @@ module Barbq.UI.Framework
     pairSym,
     pairCo,
     pairDay,
-    componentMapView,
     componentMapAction,
-    componentPullbackEvent,
     Pairing,
     Component,
-    Component',
+    Component' (..),
     SendResult,
     Handler,
     UI (..),
@@ -28,8 +30,10 @@ where
 import Control.Comonad.Store
 import Control.Comonad.Traced
 import Control.Monad.Co
-import Control.Monad.Writer (Writer, WriterT(..), mapWriter, runWriter)
+import Control.Monad.Writer (Writer, WriterT (..), mapWriter, runWriter)
+import Control.Newtype
 import Data.Functor.Day
+import Data.Profunctor
 import Relude hiding ((<|>), Text, filter)
 
 type Pairing f g = forall a b c. (a -> b -> c) -> f a -> g b -> c
@@ -50,43 +54,37 @@ type SendResult s = Endo s
 
 type Handler a s = a -> SendResult s
 
-newtype UI e v a = UI (forall s. (Handler a s -> Writer (Handler e s) v))
+newtype UI a e v = UI (forall s. (Handler a s -> Writer (Handler e s) v))
 
-type Component' e v w m = w (UI e v (m ()))
+instance Profunctor (UI a) where
 
-type Component e v w = Component' e v w (Co w)
+  lmap :: forall a v e1 e2. (e2 -> e1) -> UI a e1 v -> UI a e2 v
+  lmap f (UI ui) = UI $ \send -> mapWriter writerMap (ui send)
+    where
+      writerMap :: (v, Handler e1 s) -> (v, Handler e2 s)
+      writerMap (img, r) = (img, r <<< f)
+
+  rmap :: forall a e v1 v2. (v1 -> v2) -> UI a e v1 -> UI a e v2
+  rmap f (UI ui) = UI $ fmap f . ui
+
+newtype Component' w m e v = Component' (w (UI (m ()) e v))
+
+instance Newtype (Component' w m e v) (w (UI (m ()) e v))
+
+instance Functor w => Profunctor (Component' w m) where
+  dimap f g (Component' c1) = Component' $ dimap f g <$> c1
+
+type Component w e v = Component' w (Co w) e v
 
 componentMapAction
   :: forall m1 m2 w e v. Functor w
   => (m1 () -> m2 ())
-  -> Component' e v w m1
-  -> Component' e v w m2
-componentMapAction f = fmap transformUi
+  -> Component' w m1 e v
+  -> Component' w m2 e v
+componentMapAction f = over Component' $ fmap transformUi
   where
-    transformUi :: UI e v (m1 ()) -> UI e v (m2 ())
+    transformUi :: UI (m1 ()) e v -> UI (m2 ()) e v
     transformUi (UI ui) = UI $ \send -> ui (send <<< f)
-
-componentMapView
-  :: forall m w e v1 v2. Functor w
-  => (v1 -> v2)
-  -> Component' e v1 w m
-  -> Component' e v2 w m
-componentMapView f = fmap transformUi
-  where
-    transformUi :: UI e v1 (m ()) -> UI e v2 (m ())
-    transformUi (UI ui) = UI $ fmap f . ui
-
-componentPullbackEvent
-  :: forall m w e1 e2 v. Functor w
-  => (e2 -> e1)
-  -> Component' e1 v w m
-  -> Component' e2 v w m
-componentPullbackEvent f = fmap transformUi
-  where
-    transformUi :: UI e1 v (m ()) -> UI e2 v (m ())
-    transformUi (UI ui) = UI $ \send -> mapWriter writerMap (ui send)
-    writerMap :: (v, Handler e1 s) -> (v, Handler e2 s)
-    writerMap (img, r) = (img, r <<< f)
 
 stateToCoStore :: forall a s. State s a -> Co (Store s) a
 stateToCoStore state = co (story state)
@@ -120,13 +118,13 @@ pairWriterTraced pairing f (WriterT writer) (TracedT gf) =
 combine
   :: forall w1 w2 e v. Comonad w1
   => Comonad w2
-  => (forall a. UI e v a -> UI e v a -> UI e v a)
-  -> Component e v w1
-  -> Component e v w2
-  -> Component e v (Day w1 w2)
-combine with w1 = day (build <$> w1)
+  => (forall a. UI a e v -> UI a e v -> UI a e v)
+  -> Component w1 e v
+  -> Component w2 e v
+  -> Component (Day w1 w2) e v
+combine with (Component' w1) = over Component' $ day (build <$> w1)
   where
-    build :: UI e v (Co w1 ()) -> UI e v (Co w2 ()) -> UI e v (Co (Day w1 w2) ())
+    build :: UI (Co w1 ()) e v -> UI (Co w2 ()) e v -> UI (Co (Day w1 w2) ()) e v
     build (UI render1) (UI render2) =
       with (UI (\send -> render1 $ \co -> send (liftLeft co)))
         (UI (\send -> render2 $ \co -> send (liftRight co)))
