@@ -112,18 +112,18 @@ stateToCoStore state = co (story state)
   where
     story :: forall r. State s a -> Store s (a -> r) -> r
     story state store =
-      let { (render, s) = runStore store }
-       in let { (a, s') = runState state s }
-           in render s' a
+      let (render, s) = runStore store
+          (a, s') = runState state s
+       in render s' a
 
 writerToCoTraced :: forall a s. Writer s a -> Co (Traced s) a
 writerToCoTraced writer = co (tracer writer)
   where
     tracer :: forall r. Writer s a -> Traced s (a -> r) -> r
     tracer writer traced =
-      let { (a, s) = runWriter writer }
-       in let { f = runTraced traced s }
-           in f a
+      let (a, s) = runWriter writer
+          f = runTraced traced s
+       in f a
 
 -- Place two components next to one another
 combine
