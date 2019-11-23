@@ -89,16 +89,7 @@ tilingShell =
 -- scripts taken from ubersicht status widget via chunkwm sample ubersicht
 volumeShell :: Text
 volumeShell =
-  [r|
-  isMute=$( /usr/bin/osascript -e 'output muted of (get volume settings)' )
-
-  if [ $isMute == "true" ]; then
-    echo "0"
-  else
-    curVolume=$(osascript -e 'output volume of (get volume settings)')
-    echo $curVolume
-  fi
-|]
+  [r| /Users/bkase/barbq2/getvolume/.build/release/getvolume |]
 
 wifiShell :: Text
 wifiShell =

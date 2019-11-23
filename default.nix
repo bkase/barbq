@@ -27,8 +27,10 @@ in
       packages = p: [drv];
       shellHook = ''
         export HIE_HOOGLE_DATABASE="$(cat $(which hoogle) | sed -n -e 's|.*--database \(.*\.hoo\).*|\1|p')"
+
+        pushd getvolume && swift build -c release && popd
       '';
-      buildInputs = with pkgs; [ cabal-install hlint ghcid];
+      buildInputs = with pkgs; [ cabal-install hlint ghcid ] ++ (if pkgs.stdenv.isDarwin then [] else [ swift ]) ;
     };
   }
 
