@@ -1,0 +1,8 @@
+cradle:
+  cabal:
+    component: "exe:barbq2"
+
+dependencies:
+  - barbq2.cabal
+  - shell.nix
+  - default.nix

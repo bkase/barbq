@@ -1,13 +1,11 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoImplicitPrelude #-}
@@ -23,7 +21,8 @@
 module Main where
 
 import Barbq.Types
-import Barbq.UI
+import Barbq.UI.Components
+import Barbq.UI.Runtime (exploreCo, runRenderM)
 import Control.Applicative.Free as A
 import Control.Comonad.Store
 import Control.Concurrent (threadDelay)
