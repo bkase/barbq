@@ -19,7 +19,9 @@ module Barbq.Types
     PointedFinSet,
     point,
     maxSet,
-    mkPointedFinSet
+    mkPointedFinSet,
+    Last' (..),
+    ScrollyInput
     )
 where
 
@@ -28,8 +30,9 @@ import Control.Concurrent.Async.Timer (TimerConf)
 import Control.Lens (makeLenses)
 import Control.Monad.Catch (MonadCatch, MonadMask, MonadThrow)
 import Control.Monad.IO.Unlift
+import Data.Semigroup (Last)
 import Data.Text.Lazy
-import Relude hiding (Text)
+import Relude hiding (Last, Text)
 
 -- Base Monad
 newtype Environment = Environment Int
@@ -37,10 +40,22 @@ newtype Environment = Environment Int
 newtype M a = M (ReaderT Environment IO a)
   deriving (Functor, Applicative, Monad, MonadIO, MonadUnliftIO, MonadMask, MonadCatch, MonadThrow)
 
+-- This should be in Data.Semigroup or Data.Monoid somewhere but I can't find it
+newtype Last' a = Last' a
+  deriving (Functor)
+
+instance Semigroup (Last' a) where
+  (<>) _ b = b
+
+-- If the underlying a is a monoid, use a's mempty, but ignore a's mappend
+instance Monoid a => Monoid (Last' a) where
+  mempty = Last' mempty
+
 -- Tasks query the system for information
 data Task a
   = NopTask a
   | ShellTask Text (Text -> a)
+  | IOTask (IO a)
   deriving (Functor)
 
 -- Providers
@@ -71,3 +86,5 @@ point (PointedFinSet tuple) = fst tuple
 
 maxSet :: PointedFinSet -> Int
 maxSet (PointedFinSet tuple) = snd tuple
+
+type ScrollyInput = (Last' Text, Sum Int, Maybe (Last Int))

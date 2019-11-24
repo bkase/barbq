@@ -15,8 +15,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 module Main where
 
@@ -29,12 +29,12 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async.Timer (Timer, TimerConf, defaultConf, setInitDelay, setInterval, wait, withAsyncTimer)
 import Control.Lens
 import Control.Monad.IO.Unlift
-import Data.Semigroup ((<>))
+import Data.Semigroup ((<>), Last (..))
 import Data.Text.Lazy
 import Graphics.Vty (mkVty, shutdown, standardIOConfig)
 import Pipes ((>->), Pipe, Producer, await, runEffect, yield)
 import Pipes.Concurrent (Input, Output, fromInput, latest, newest, spawn, toOutput)
-import Relude hiding ((<|>), Text)
+import Relude hiding ((<|>), Last, Text)
 import System.Process (readProcess)
 import Text.Megaparsec
 import Text.Megaparsec.Char (char)
@@ -130,11 +130,13 @@ shellInt s =
         parser :: Parser Int
         parser = decimal
 
+-- TODO: Make the int more composable or something
 runTask :: (MonadIO m, MonadShell m) => Task o -> m o
 runTask (ShellTask s f) = do
   liftIO $ threadDelay 100000
   f <$> execSh s
 runTask (NopTask a) = return a
+runTask (IOTask ma) = liftIO ma
 
 newtype ProviderRuntime m a = ProviderRuntime (m (Input a))
   deriving (Functor)
@@ -156,8 +158,8 @@ after i = defaultConf & setInitDelay i
 everyi :: Int -> TimerConf -> TimerConf
 everyi = setInterval
 
-provide :: TimerConf -> Task o -> o -> Provider o
-provide conf task z = Provider $ liftAp (ProviderAtom conf task z)
+provide :: Monoid o => TimerConf -> Task o -> Provider o
+provide conf task = Provider $ liftAp (ProviderAtom conf task mempty)
 
 runProvider :: (MonadIntervalRunner m, MonadUnliftIO m, MonadShell m, Applicative (ProviderRuntime m)) => forall o. Output () -> Provider o -> m (Input o)
 runProvider triggerOutput (Provider freeAp) = minput
@@ -178,8 +180,8 @@ runProvider triggerOutput (Provider freeAp) = minput
 
 type Parser = Parsec Void Text
 
-tabsTask :: Task (Maybe PointedFinSet)
-tabsTask = fmap (uncurry mkPointedFinSet) <$> fixed
+tabsTask :: Task (Maybe (Last PointedFinSet))
+tabsTask = fmap (Last . uncurry mkPointedFinSet) <$> fixed
   where
     fixed :: Task (Maybe (Int, Int))
     fixed = untext <$> shell tilingShell
@@ -193,6 +195,13 @@ tabsTask = fmap (uncurry mkPointedFinSet) <$> fixed
           max <- decimal
           pure (point, max)
 
+scrollTask :: IORef (Sum Int) -> Task (Sum Int)
+scrollTask ref = IOTask $ do
+  x <- readIORef ref
+  let next = x <> Sum 1
+  writeIORef ref next
+  return next
+
 app :: M ()
 app = do
   cfg <- liftIO standardIOConfig
@@ -200,10 +209,12 @@ app = do
   -- we send unit to unblock so we can use latest
   (outputU, inputU) <- liftIO $ spawn (newest 1)
   -- (purely) describe the providers
-  let volumeData :: Provider Int = fromMaybe 0 <$> provide (after 0 & everyi 500) (shellInt volumeShell) Nothing
-  let wifiData :: Provider (Maybe Text) = provide (after 0 & everyi 2000) (Just <$> shell wifiShell) Nothing
-  let tabsData :: Provider (Maybe PointedFinSet) = provide (after 0 & everyi 50) tabsTask Nothing
-  let tupled = (,,) <$> tabsData <*> volumeData <*> wifiData
+  let volumeData :: Provider (Last' (Sum Int)) = Last' <$> provide (after 0 & everyi 500) (Sum . fromMaybe 0 <$> shellInt volumeShell)
+  let wifiData :: Provider (Last' Text) = Last' <$> provide (after 0 & everyi 2000) (shell wifiShell)
+  let tabsData :: Provider (Maybe (Last PointedFinSet)) = provide (after 0 & everyi 50) tabsTask
+  ref <- liftIO $ newIORef mempty
+  let scrollData :: Provider ScrollyInput = (Last' "Hello",,Just (Last 10)) <$> provide (after 500 & everyi 500) (scrollTask ref)
+  let tupled = (,,,) <$> tabsData <*> volumeData <*> wifiData <*> scrollData
   -- run the provider
   inputG <- runProvider outputU tupled
   input <- liftIO $ normalize inputG inputU
