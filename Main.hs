@@ -29,12 +29,12 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async.Timer (Timer, TimerConf, defaultConf, setInitDelay, setInterval, wait, withAsyncTimer)
 import Control.Lens
 import Control.Monad.IO.Unlift
-import Data.Semigroup ((<>), Last (..))
+import Data.Semigroup ((<>))
 import Data.Text.Lazy
 import Graphics.Vty (mkVty, shutdown, standardIOConfig)
 import Pipes ((>->), Pipe, Producer, await, runEffect, yield)
 import Pipes.Concurrent (Input, Output, fromInput, latest, newest, spawn, toOutput)
-import Relude hiding ((<|>), Last, Text)
+import Relude hiding ((<|>), Text)
 import System.Process (readProcess)
 import Text.Megaparsec
 import Text.Megaparsec.Char (char)
@@ -45,7 +45,7 @@ import UnliftIO.Concurrent (forkIO)
 -- Mtl typeclasses
 class Monad m => MonadIntervalRunner (m :: * -> *) where
 
-  start :: forall o. TimerConf -> Output () -> m o -> o -> m (Input o)
+  start :: forall o. TimerConf -> Output () -> m o -> m (Input (Maybe o))
 
 class Monad m => MonadShell m where
 
@@ -55,24 +55,25 @@ class Monad m => MonadShell m where
   execSh = lift . execSh
 
 instance MonadIntervalRunner M where
-  start :: forall o. TimerConf -> Output () -> M o -> o -> M (Input o)
-  start conf triggerOutput task z = do
-    (output, input) <- liftIO $ spawn (latest z)
+  start :: forall o. TimerConf -> Output () -> M o -> M (Input (Maybe o))
+  start conf triggerOutput task = do
+    (output, input) <- liftIO $ spawn (latest Nothing)
     _tid <- forkIO $ withAsyncTimer conf (loop output)
     return input
     where
       loop output timer = do
         runEffect $ runTask timer >-> toOutput (output <> contramap (const ()) triggerOutput)
         loop output timer
-      runTask :: Timer -> Producer o M ()
+      runTask :: Timer -> Producer (Maybe o) M ()
       runTask timer = do
         lift $ liftIO $ wait timer
         o <- lift task
-        yield o
+        yield $ Just o
 
 instance MonadShell M where
   execSh s = do
     output <- liftIO $ readProcess "/bin/bash" ["-c", unpack s] []
+    -- trace output $
     return $ pack output
 
 shell :: Text -> Task Text
@@ -90,7 +91,13 @@ tilingShell =
 -- scripts taken from ubersicht status widget via chunkwm sample ubersicht
 volumeShell :: Text
 volumeShell =
-  [r| /Users/bkase/barbq2/getvolume/.build/release/getvolume |]
+  [r| /Users/bkase/barbq2/getvolume/.build/debug/getvolume |]
+
+externalIpShell :: Text
+externalIpShell = "curl -s icanhazip.com"
+
+internalIpShell :: Text
+internalIpShell = "ipconfig getifaddr en0"
 
 wifiShell :: Text
 wifiShell =
@@ -138,19 +145,19 @@ runTask (ShellTask s f) = do
 runTask (NopTask a) = return a
 runTask (IOTask ma) = liftIO ma
 
-newtype ProviderRuntime m a = ProviderRuntime (m (Input a))
+newtype ProviderRuntime m a = ProviderRuntime (m (Input (Maybe a)))
   deriving (Functor)
 
 instance Applicative (ProviderRuntime M) where
 
   pure a = ProviderRuntime $ do
-    (_output, input) <- liftIO $ spawn (latest a)
+    (_output, input) <- liftIO $ spawn (latest $ Just a)
     return input
 
   liftA2 f (ProviderRuntime ma) (ProviderRuntime mb) = ProviderRuntime $ do
     ia <- ma
     ib <- mb
-    return (f <$> ia <*> ib)
+    return $ (\a b -> f <$> a <*> b) <$> ia <*> ib
 
 after :: Int -> TimerConf
 after i = defaultConf & setInitDelay i
@@ -158,30 +165,28 @@ after i = defaultConf & setInitDelay i
 everyi :: Int -> TimerConf -> TimerConf
 everyi = setInterval
 
-provide :: Monoid o => TimerConf -> Task o -> Provider o
-provide conf task = Provider $ liftAp (ProviderAtom conf task mempty)
+provide :: TimerConf -> Task o -> Provider o
+provide conf task = Provider $ Just <$> liftAp (ProviderAtom conf task)
 
-runProvider :: (MonadIntervalRunner m, MonadUnliftIO m, MonadShell m, Applicative (ProviderRuntime m)) => forall o. Output () -> Provider o -> m (Input o)
-runProvider triggerOutput (Provider freeAp) = minput
+runProvider :: (MonadIntervalRunner m, MonadUnliftIO m, MonadShell m, Applicative (ProviderRuntime m)) => forall o. Output () -> Provider o -> m (Input (Maybe o))
+runProvider triggerOutput (Provider freeAp) = fmap join <$> minput
   where
     (ProviderRuntime minput) =
       runAp
         ( \atom -> ProviderRuntime $ do
             let task' = runTask $ task atom
-            start (conf atom) triggerOutput task' (z atom)
+            start (conf atom) triggerOutput task'
           )
         freeAp
     conf :: ProviderAtom a -> TimerConf
     conf = view providerConf
-    z :: ProviderAtom a -> a
-    z = view providerDefault
     task :: ProviderAtom a -> Task a
     task = view providerTask
 
 type Parser = Parsec Void Text
 
-tabsTask :: Task (Maybe (Last PointedFinSet))
-tabsTask = fmap (Last . uncurry mkPointedFinSet) <$> fixed
+tabsTask :: Task (Maybe PointedFinSet)
+tabsTask = fmap (uncurry mkPointedFinSet) <$> fixed
   where
     fixed :: Task (Maybe (Int, Int))
     fixed = untext <$> shell tilingShell
@@ -209,11 +214,11 @@ app = do
   -- we send unit to unblock so we can use latest
   (outputU, inputU) <- liftIO $ spawn (newest 1)
   -- (purely) describe the providers
-  let volumeData :: Provider (Last' (Sum Int)) = Last' <$> provide (after 0 & everyi 500) (Sum . fromMaybe 0 <$> shellInt volumeShell)
-  let wifiData :: Provider (Last' Text) = Last' <$> provide (after 0 & everyi 2000) (shell wifiShell)
-  let tabsData :: Provider (Maybe (Last PointedFinSet)) = provide (after 0 & everyi 50) tabsTask
+  let volumeData :: Provider Int = provide (after 0 & everyi 500) (fromMaybe 0 <$> shellInt volumeShell)
+  let wifiData :: Provider Text = provide (after 0 & everyi 2000) (shell wifiShell)
+  let tabsData :: Provider (Maybe PointedFinSet) = provide (after 0 & everyi 100) tabsTask
   ref <- liftIO $ newIORef mempty
-  let scrollData :: Provider ScrollyInput = (Last' "Hello",,Just (Last 10)) <$> provide (after 500 & everyi 500) (scrollTask ref)
+  let scrollData :: Provider ScrollyInput = ("Billie Eilish - Ocean Eyes",,20,5) <$> provide (after 0 & everyi 500) (scrollTask ref)
   let tupled = (,,,) <$> tabsData <*> volumeData <*> wifiData <*> scrollData
   -- run the provider
   inputG <- runProvider outputU tupled
@@ -222,23 +227,21 @@ app = do
   liftIO $ shutdown vty
   where
     -- Given a "latest" input and a unit trigger, yield a triggered latest
-    normalize :: Input a -> Input () -> IO (Input (Maybe a))
+    normalize :: Show a => Input a -> Input () -> IO (Input (Maybe a))
     normalize latestInput triggerInput = do
       (output, input) <- spawn (newest 1)
       _tid <- forkIO $ runEffect $ fromInput latestInput >-> handler triggerInput >-> toOutput output
       return input
     -- wait for the trigger and yield Just until a count threshold
-    handler :: Input () -> Pipe a (Maybe a) IO ()
+    handler :: Show a => Input () -> Pipe a (Maybe a) IO ()
     handler triggerInput = loop 0
       where
-        loop :: Int -> Pipe a (Maybe a) IO ()
+        loop :: Show a => Int -> Pipe a (Maybe a) IO ()
         loop i = do
           lift $ runEffect $ fromInput triggerInput >-> await
           a <- await
           yield (Just a)
-          if i > 200
-            then yield Nothing
-            else loop (i + 1)
+          loop (i + 1)
 
 runApp :: M () -> IO ()
 runApp (M m) = runReaderT m (Environment 0)

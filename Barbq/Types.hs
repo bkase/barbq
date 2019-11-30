@@ -13,14 +13,12 @@ module Barbq.Types
     Task (..),
     ProviderAtom (..),
     providerConf,
-    providerDefault,
     providerTask,
     Provider (..),
     PointedFinSet,
     point,
     maxSet,
     mkPointedFinSet,
-    Last' (..),
     ScrollyInput
     )
 where
@@ -30,26 +28,14 @@ import Control.Concurrent.Async.Timer (TimerConf)
 import Control.Lens (makeLenses)
 import Control.Monad.Catch (MonadCatch, MonadMask, MonadThrow)
 import Control.Monad.IO.Unlift
-import Data.Semigroup (Last)
 import Data.Text.Lazy
-import Relude hiding (Last, Text)
+import Relude hiding (Text)
 
 -- Base Monad
 newtype Environment = Environment Int
 
 newtype M a = M (ReaderT Environment IO a)
   deriving (Functor, Applicative, Monad, MonadIO, MonadUnliftIO, MonadMask, MonadCatch, MonadThrow)
-
--- This should be in Data.Semigroup or Data.Monoid somewhere but I can't find it
-newtype Last' a = Last' a
-  deriving (Functor)
-
-instance Semigroup (Last' a) where
-  (<>) _ b = b
-
--- If the underlying a is a monoid, use a's mempty, but ignore a's mappend
-instance Monoid a => Monoid (Last' a) where
-  mempty = Last' mempty
 
 -- Tasks query the system for information
 data Task a
@@ -65,18 +51,25 @@ data Task a
 data ProviderAtom a
   = ProviderAtom
       { _providerConf :: TimerConf,
-        _providerTask :: Task a,
-        _providerDefault :: a
+        _providerTask :: Task a
         }
   deriving (Functor)
 
 makeLenses ''ProviderAtom
 
-newtype Provider a = Provider (A.Ap ProviderAtom a)
-  deriving (Functor, Applicative)
+newtype Provider a = Provider (A.Ap ProviderAtom (Maybe a))
+  deriving (Functor)
+
+instance Applicative Provider where
+
+  pure = Provider . A.Pure . Just
+
+  liftA2 op (Provider fa) (Provider fb) =
+    Provider $ (\a b -> op <$> a <*> b) <$> fa <*> fb
 
 -- Models
 newtype PointedFinSet = PointedFinSet (Int, Int)
+  deriving (Show)
 
 mkPointedFinSet :: Int -> Int -> PointedFinSet
 mkPointedFinSet point max = PointedFinSet (point, max)
@@ -87,4 +80,4 @@ point (PointedFinSet tuple) = fst tuple
 maxSet :: PointedFinSet -> Int
 maxSet (PointedFinSet tuple) = snd tuple
 
-type ScrollyInput = (Last' Text, Sum Int, Maybe (Last Int))
+type ScrollyInput = (Text, Sum Int, Int, Int)

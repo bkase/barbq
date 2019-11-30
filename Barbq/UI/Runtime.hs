@@ -18,7 +18,7 @@ where
 import Barbq.UI.Framework
 import Control.Comonad (Comonad, duplicate, extract)
 import Control.Comonad.Store
-import Control.Comonad.Traced
+import Control.Comonad.Traced hiding (trace)
 import Control.Monad.Writer (Writer, runWriter, tell)
 import Control.Newtype
 import Data.Functor.Day
@@ -31,13 +31,13 @@ import Relude hiding ((<|>))
 newtype RenderM a = RenderM (ReaderT V.Vty IO a)
   deriving (Functor, Applicative, Monad, MonadReader V.Vty, MonadIO)
 
-runRenderM :: Consumer e RenderM () -> V.Vty -> Input e -> IO ()
+runRenderM :: Consumer (Maybe e) RenderM () -> V.Vty -> Input (Maybe e) -> IO ()
 runRenderM crm vty input = runReaderT m vty
   where
     m :: ReaderT V.Vty IO ()
     (RenderM m) = runEffect $ fromInput input >-> crm
 
-explore :: forall w m e. Comonad w => Pairing m w -> Component' w m e V.Image -> Consumer (Maybe e) RenderM ()
+explore :: forall w m e. (Show e, Comonad w) => Pairing m w -> Component' w m e V.Image -> Consumer (Maybe e) RenderM ()
 explore pair space = do
   vty <- lift ask
   let (img, runner) = let { (UI ui) = extract (unpack space) } in runWriter (ui send)
@@ -56,7 +56,7 @@ explore pair space = do
     send action =
       Endo $ over Component' $ pair (const id) action <<< duplicate
 
-exploreCo :: forall w e. Comonad w => Component w e V.Image -> Consumer (Maybe e) RenderM ()
+exploreCo :: forall w e. (Show e, Comonad w) => Component w e V.Image -> Consumer (Maybe e) RenderM ()
 exploreCo = explore (pairSym pairCo)
 
 newtype AddingInt = AddingInt Int
