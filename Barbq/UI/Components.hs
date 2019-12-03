@@ -39,6 +39,12 @@ pureProvidedComponent draw = Component' $ store render Nothing
           return v
     unpack' = unpack @(Co' (Store (Maybe e)) ())
 
+static :: V.Image -> Component Identity () V.Image
+static image = Component' $ Identity render
+  where
+    render :: UI (Co Identity ()) () V.Image
+    render = UI $ \_ -> return image
+
 type X a = Maybe a
 
 type A = Maybe PointedFinSet
@@ -104,10 +110,7 @@ knownWifiComponent =
     wifiPrefix img = if V.imageWidth img == 0 then img else V.text V.defAttr "\xf1eb  " <|> img
 
 unknownWifiComponent :: Component Identity () V.Image
-unknownWifiComponent = Component' $ Identity render
-  where
-    render :: UI (Co Identity ()) () V.Image
-    render = UI $ \_ -> return $ V.text V.defAttr "\xf127  Disconnected"
+unknownWifiComponent = static $ V.text V.defAttr "\xf127  Disconnected"
 
 wifiComponent :: Component (Choice (Store (Maybe E)) Identity) (Maybe C) V.Image
 wifiComponent =
