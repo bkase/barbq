@@ -82,10 +82,11 @@ shell = flip ShellTask id
 tilingShell :: Text
 tilingShell =
   [r|
-  desktops=$(chunkc tiling::query -D $(chunkc tiling::query -m id))
-  current=$(/usr/local/bin/chunkc tiling::query -d id)
+  # desktops=$(chunkc tiling::query -D $(chunkc tiling::query -m id))
+  # current=$(/usr/local/bin/chunkc tiling::query -d id)
 
-  echo "$current,${desktops: -1}"
+  # echo "$current,${desktops: -1}"
+  echo 3,6
 |]
 
 -- scripts taken from ubersicht status widget via chunkwm sample ubersicht
@@ -120,12 +121,16 @@ while read line; do
 done <<< "$(echo "$services")"
 
 if [ -n "$currentservice" ] ; then
-    echo -n "$currentservice: $(networksetup -getairportnetwork $currentsdev | cut -c 24-)"
+    echo -n "$(networksetup -getairportnetwork $currentsdev | cut -c 24-)"
 else
-    >&1 echo -n "Unknown"
-    exit 1
+    >&1 echo -n ""
 fi
 |]
+
+-- If empty text then Nothing, else Just non-empty text
+shellEmpty :: Text -> Task (Maybe Text)
+shellEmpty s =
+  (\s' -> if s' == "" then Nothing else Just s') <$> shell s
 
 shellInt :: Text -> Task (Maybe Int)
 shellInt s =
@@ -215,11 +220,12 @@ app = do
   (outputU, inputU) <- liftIO $ spawn (newest 1)
   -- (purely) describe the providers
   let volumeData :: Provider Int = provide (after 0 & everyi 500) (fromMaybe 0 <$> shellInt volumeShell)
-  let wifiData :: Provider Text = provide (after 0 & everyi 2000) (shell wifiShell)
-  let tabsData :: Provider (Maybe PointedFinSet) = provide (after 0 & everyi 100) tabsTask
+  let wifiName :: Provider (Maybe Text) = provide (after 0 & everyi 2000) (shellEmpty wifiShell)
   ref <- liftIO $ newIORef mempty
-  let scrollData :: Provider ScrollyInput = ("Billie Eilish - Ocean Eyes",,20,5) <$> provide (after 0 & everyi 500) (scrollTask ref)
-  let tupled = (,,,) <$> tabsData <*> volumeData <*> wifiData <*> scrollData
+  let ticks :: Provider (Sum Int) = provide (after 0 & everyi 500) (scrollTask ref)
+  let wifiData :: Provider (Maybe (Text, Sum Int)) = (,) <$> ticks <*> wifiName & fmap sequence & fmap (fmap swap)
+  let tabsData :: Provider (Maybe PointedFinSet) = provide (after 0 & everyi 100) tabsTask
+  let tupled = (,,) <$> tabsData <*> volumeData <*> wifiData
   -- run the provider
   inputG <- runProvider outputU tupled
   input <- liftIO $ normalize inputG inputU

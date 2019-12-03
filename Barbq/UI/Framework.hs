@@ -1,4 +1,6 @@
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -20,20 +22,51 @@ module Barbq.UI.Framework
     Component' (..),
     Handler,
     UI (..),
+    Choice (..),
+    Co' (..),
+    tell',
+    moveTrue,
+    moveFalse,
+    liftTrue,
+    liftFalse,
     combine,
+    stack,
     stateToCoStore,
     writerToCoTraced
     )
 where
 
+import Control.Comonad.Env as E
 import Control.Comonad.Store
-import Control.Comonad.Traced
+import Control.Comonad.Traced as T
 import Control.Monad.Co
 import Control.Monad.Writer (Writer, WriterT (..), mapWriter, runWriter)
 import Control.Newtype
 import Data.Functor.Day
-import Data.Profunctor
+import Data.Profunctor hiding (Choice)
 import Relude hiding ((<|>), Text, filter)
+
+-- Newtype to get mtl instances off the comonads instead of the CoT transformer
+newtype Co' w a = Co' (Co w a)
+  deriving (Functor, Applicative, Monad)
+
+instance Newtype (Co' w a) (Co w a)
+
+instance MonadState s (Co' (Store s)) where
+
+  get = Co' $ co (\store -> extract store (pos store))
+
+  put s = Co' $ co (\store -> extract (seek s store) ())
+
+instance MonadReader r (Co' (Env r)) where
+
+  ask = Co' $ co (\env -> extract env (E.ask env))
+
+  local f (Co' (CoT c)) = Co' $ CoT (c <<< E.local f)
+
+-- "MonadTell" instance
+tell' :: s -> Co' (Traced s) ()
+tell' s = Co' $ co (\t -> runTraced t s ())
 
 -- Pairings
 type Pairing f g = forall a b c. (a -> b -> c) -> f a -> g b -> c
@@ -145,3 +178,49 @@ liftLeft a = co (\(Day w w' f) -> runCo a (fmap (`f` extract w') w))
 
 liftRight :: forall w w' a. Functor w => Comonad  w' => Co w a -> Co (Day  w' w) a
 liftRight a = co (\(Day w' w f) -> runCo a (fmap (f (extract w')) w))
+
+-- Choice
+data Choice f g a = Choice Bool (f a) (g a)
+
+instance (Functor f, Functor g) => Functor (Choice f g) where
+  fmap op (Choice b fa ga) = Choice b (fmap op fa) (fmap op ga)
+
+instance (Comonad f, Comonad g) => Comonad (Choice f g) where
+
+  extend f (Choice b fa ga) =
+    Choice b (extend (f <<< flip (Choice True) ga) fa)
+      (extend (f <<< Choice False fa) ga)
+
+  extract (Choice True fa _) = extract fa
+  extract (Choice False _ ga) = extract ga
+
+-- | Move to the true state.
+moveTrue :: forall f g. (Comonad f, Functor g) => Co (Choice f g) ()
+moveTrue = co (\(Choice _ fa _) -> extract fa ())
+
+-- | Move to the false state.
+moveFalse :: forall f g. (Comonad g, Functor f) => Co (Choice f g) ()
+moveFalse = co (\(Choice _ _ ga) -> extract ga ())
+
+-- | Lift an action to act on the true state.
+liftTrue :: forall f g a. (Functor f, Functor g) => Co f a -> Co (Choice f g) a
+liftTrue x = co (\(Choice _ fa _) -> runCo x fa)
+
+-- | Lift an action to act on the right state.
+liftFalse :: forall f g a. (Functor f, Functor g) => Co g a -> Co (Choice f g) a
+liftFalse x = co (\(Choice _ _ ga) -> runCo x ga)
+
+-- | Stack two components and show the front
+stack
+  :: forall w1 w2 e1 e2 v. Comonad w1
+  => Comonad w2
+  => Component w1 e1 v
+  -> Component w2 e2 v
+  -> Component (Choice w1 w2) (e1, e2) v
+stack c1 c2 =
+  Component' $ Choice True (unpack front) (unpack back)
+  where
+    front :: Component' w1 (Co (Choice w1 w2)) (e1, e2) v
+    front = c1 & componentMapAction liftTrue & lmap fst
+    back :: Component' w2 (Co (Choice w1 w2)) (e1, e2) v
+    back = c2 & componentMapAction liftFalse & lmap snd

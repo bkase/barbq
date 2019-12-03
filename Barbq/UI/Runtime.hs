@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Barbq.UI.Runtime
   ( RenderM (..),
@@ -19,7 +20,9 @@ import Barbq.UI.Framework
 import Control.Comonad (Comonad, duplicate, extract)
 import Control.Comonad.Store
 import Control.Comonad.Traced hiding (trace)
-import Control.Monad.Writer (Writer, runWriter, tell)
+import Control.Monad.Co
+import Control.Monad.State.Class
+import Control.Monad.Writer (runWriter, tell)
 import Control.Newtype
 import Data.Functor.Day
 import qualified Graphics.Vty as V
@@ -67,10 +70,10 @@ instance Semigroup AddingInt where
 instance Monoid AddingInt where
   mempty = AddingInt 0
 
-tracedExample :: Component' (Traced AddingInt) (Writer AddingInt) e V.Image
+tracedExample :: Component (Traced AddingInt) e V.Image
 tracedExample = Component' $ traced render
   where
-    render :: AddingInt -> UI (Writer AddingInt ()) e V.Image
+    render :: AddingInt -> UI (Co (Traced AddingInt) ()) e V.Image
     render (AddingInt count) = UI $ \send -> do
       let line0 = V.text (V.defAttr `V.withForeColor` V.green) ("Traced " <> show count <> " line")
           line1 = V.string (V.defAttr `V.withBackColor` V.blue) "x"
@@ -78,14 +81,14 @@ tracedExample = Component' $ traced render
       () <-
         tell $ const
           $ if count < 3
-            then send (tell (AddingInt 1))
+            then send (unpack $ tell' (AddingInt 1))
             else Endo id
       return img
 
-storeExample :: Component' (Store Int) (State Int) e V.Image
+storeExample :: Component (Store Int) e V.Image
 storeExample = Component' $ store render 0
   where
-    render :: Int -> UI (State Int ()) e V.Image
+    render :: Int -> UI (Co (Store Int) ()) e V.Image
     render count = UI $ \send -> do
       let line0 = V.text (V.defAttr `V.withForeColor` V.green) ("Store " <> show count <> " line")
           line1 = V.string (V.defAttr `V.withBackColor` V.blue) "x"
@@ -93,12 +96,13 @@ storeExample = Component' $ store render 0
       () <-
         tell $ const
           $ if count < 3
-            then send (modify (+ 1))
+            then send (modify' (+ 1))
             else Endo id
       return $ img & V.resizeWidth 20 & V.translateX 3
+    modify' f = unpack @(Co' (Store Int) ()) $ modify f
 
 combinedExample :: forall e. Component (Day (Store Int) (Traced AddingInt)) e V.Image
-combinedExample = combine with store traced
+combinedExample = combine with storeExample tracedExample
   where
     with :: forall a. UI a e V.Image -> UI a e V.Image -> UI a e V.Image
     with (UI ui1) (UI ui2) = UI $ \send -> do
@@ -107,7 +111,3 @@ combinedExample = combine with store traced
       --let w1 = imageWidth pic1
       --let w2 = imageWidth pic2
       return $ pic1 <|> pic2
-    traced :: Component (Traced AddingInt) e V.Image
-    traced = componentMapAction writerToCoTraced tracedExample
-    store :: Component (Store Int) e V.Image
-    store = componentMapAction stateToCoStore storeExample
