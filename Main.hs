@@ -31,7 +31,7 @@ import Control.Lens
 import Control.Monad.IO.Unlift
 import Data.Semigroup ((<>))
 import Data.Text.Lazy
-import Graphics.Vty (mkVty, shutdown, standardIOConfig)
+import Graphics.Vty (displayBounds, mkVty, outputIface, regionWidth, shutdown, standardIOConfig)
 import Pipes ((>->), Pipe, Producer, await, runEffect, yield)
 import Pipes.Concurrent (Input, Output, fromInput, latest, newest, spawn, toOutput)
 import Relude hiding ((<|>), Text)
@@ -229,7 +229,10 @@ app = do
   -- run the provider
   inputG <- runProvider outputU tupled
   input <- liftIO $ normalize inputG inputU
-  liftIO $ runRenderM (exploreCo realComponent) vty input
+  -- get vty width
+  bounds <- liftIO $ displayBounds (outputIface vty)
+  let width = regionWidth bounds
+  liftIO $ runRenderM (exploreCo $ realComponent width) vty input
   liftIO $ shutdown vty
   where
     -- Given a "latest" input and a unit trigger, yield a triggered latest

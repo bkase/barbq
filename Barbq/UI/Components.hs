@@ -23,6 +23,7 @@ import Data.Text.Lazy (Text, length, replicate, splitAt)
 import qualified Graphics.Vty as V
 import Graphics.Vty ((<|>))
 import Relude hiding ((<|>), Text, filter, length, replicate, splitAt)
+import qualified Relude as R
 
 type PureBarbqComponent e = Component (Store (Maybe e)) (Maybe e) V.Image
 
@@ -45,6 +46,57 @@ static image = Component' $ Identity render
     render :: UI (Co Identity ()) () V.Image
     render = UI $ \_ -> return image
 
+-- Flexish layout
+liftLayout2
+  :: forall a e i. (i -> V.Image -> V.Image -> V.Image)
+  -> i
+  -> UI a e V.Image
+  -> UI a e V.Image
+  -> UI a e V.Image
+liftLayout2 layout parentWidth (UI ui1) (UI ui2) = UI $ \send -> do
+  left <- ui1 send
+  right <- ui2 send
+  return $ layout parentWidth left right
+
+liftLayoutN
+  :: forall a e i. (i -> [V.Image] -> V.Image)
+  -> i
+  -> [UI a e V.Image]
+  -> UI a e V.Image
+liftLayoutN layout parentWidth uis = UI $ \send -> do
+  imgs <- mapM (\(UI ui) -> ui send) uis
+  return $ layout parentWidth imgs
+
+spaces :: Int64 -> Text
+spaces i = replicate i " "
+
+layoutSpaceBetween :: forall a e i. Integral i => i -> UI a e V.Image -> UI a e V.Image -> UI a e V.Image
+layoutSpaceBetween = liftLayout2 layout
+  where
+    layout :: i -> V.Image -> V.Image -> V.Image
+    layout parentWidth left right =
+      let w1 = fromIntegral $ V.imageWidth left
+          w2 = fromIntegral $ V.imageWidth right
+          extraSpace w1 w2 = spaces $ fromIntegral (parentWidth - w1 - w2)
+       in left <|> V.text V.defAttr (extraSpace w1 w2) <|> right
+
+layoutSpaceAround :: forall a e i. Integral i => i -> [UI a e V.Image] -> UI a e V.Image
+layoutSpaceAround = liftLayoutN layout
+  where
+    layout :: i -> [V.Image] -> V.Image
+    layout parentWidth children =
+      let ws :: [Float] = fromIntegral . V.imageWidth <$> children
+          pw :: Float = fromIntegral parentWidth
+          sectionw = pw / fromIntegral (R.length ws)
+          extraws = (\w -> (sectionw - w) / 2) <$> ws
+          space i = V.text V.defAttr $ spaces i
+          spaced = zipWith (\extraw child -> space (round extraw) <|> child <|> space (round extraw)) extraws children
+       in spaced & foldr (<|>) mempty
+
+two :: forall a b. ([a] -> b) -> (a -> a -> b)
+two f x y = f [x, y]
+
+-- Content
 type X a = Maybe a
 
 type A = Maybe PointedFinSet
@@ -52,6 +104,8 @@ type A = Maybe PointedFinSet
 type B = Int
 
 type C = Maybe (Text, Sum Int)
+
+type Schema = X (A, B, C)
 
 -- youtube "\xf167 \xf04b "
 scrollyComponent :: PureBarbqComponent ScrollyInput
@@ -140,14 +194,9 @@ third' (_, _, c) = c
 
 -- fourth' :: forall a b c d. (a, b, c, d) -> d
 -- fourth' (_, _, _, d) = d
-realComponent :: Component (Day3 (Store (X A)) (Store (X B)) (Choice (Store (X ScrollyInput)) Identity)) (X (A, B, C)) V.Image
-realComponent = combine with tabs (combine with volume wifi)
+realComponent :: Int -> Component (Day3 (Store (X A)) (Store (X B)) (Choice (Store (X ScrollyInput)) Identity)) Schema V.Image
+realComponent parentWidth = combine (layoutSpaceBetween parentWidth) tabs (combine (two $ layoutSpaceAround $ parentWidth `div` 2) volume wifi)
   where
-    with :: forall e a. UI a e V.Image -> UI a e V.Image -> UI a e V.Image
-    with (UI ui1) (UI ui2) = UI $ \send -> do
-      pic1 <- ui1 send
-      pic2 <- ui2 send
-      return $ pic1 <|> V.string V.defAttr "   " <|> pic2
     tabs :: forall b c. Component (Store (X A)) (X (A, b, c)) V.Image
     tabs =
       tabsComponent & lmap (fmap fst')
