@@ -10,6 +10,7 @@
 module Barbq.Types
   ( Environment (..),
     M (..),
+    DebugState (..),
     Task (..),
     ProviderAtom (..),
     providerConf,
@@ -31,11 +32,15 @@ import Control.Monad.IO.Unlift
 import Data.Text.Lazy
 import Relude hiding (Text)
 
+data DebugState
+  = Prod
+  | Debug
+
 -- Base Monad
-newtype Environment = Environment Int
+newtype Environment = Environment DebugState
 
 newtype M a = M (ReaderT Environment IO a)
-  deriving (Functor, Applicative, Monad, MonadIO, MonadUnliftIO, MonadMask, MonadCatch, MonadThrow)
+  deriving (Functor, Applicative, Monad, MonadIO, MonadUnliftIO, MonadMask, MonadCatch, MonadThrow, MonadReader Environment)
 
 -- Tasks query the system for information
 data Task a

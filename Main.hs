@@ -35,6 +35,7 @@ import Graphics.Vty (displayBounds, mkVty, outputIface, regionWidth, shutdown, s
 import Pipes ((>->), Pipe, Producer, await, runEffect, yield)
 import Pipes.Concurrent (Input, Output, fromInput, latest, newest, spawn, toOutput)
 import Relude hiding ((<|>), Text)
+import System.Environment (getArgs)
 import System.Process (readProcess)
 import Text.Megaparsec
 import Text.Megaparsec.Char (char)
@@ -82,11 +83,10 @@ shell = flip ShellTask id
 tilingShell :: Text
 tilingShell =
   [r|
-  # desktops=$(chunkc tiling::query -D $(chunkc tiling::query -m id))
-  # current=$(/usr/local/bin/chunkc tiling::query -d id)
+  desktops=$(chunkc tiling::query -D $(chunkc tiling::query -m id))
+  current=$(/usr/local/bin/chunkc tiling::query -d id)
 
-  # echo "$current,${desktops: -1}"
-  echo 3,6
+  echo "$current,${desktops: -1}"
 |]
 
 -- scripts taken from ubersicht status widget via chunkwm sample ubersicht
@@ -190,11 +190,12 @@ runProvider triggerOutput (Provider freeAp) = fmap join <$> minput
 
 type Parser = Parsec Void Text
 
-tabsTask :: Task (Maybe PointedFinSet)
-tabsTask = fmap (uncurry mkPointedFinSet) <$> fixed
+tabsTask :: MonadReader Environment m => m (Task (Maybe PointedFinSet))
+tabsTask = fmap (fmap (uncurry mkPointedFinSet)) . fixed <$> ask
   where
-    fixed :: Task (Maybe (Int, Int))
-    fixed = untext <$> shell tilingShell
+    fixed :: Environment -> Task (Maybe (Int, Int))
+    fixed (Environment Debug) = untext <$> NopTask "3,6"
+    fixed (Environment Prod) = untext <$> shell tilingShell
     untext :: Text -> Maybe (Int, Int)
     untext s = rightToMaybe $ parse numbers "" s
       where
@@ -224,11 +225,12 @@ app = do
   ref <- liftIO $ newIORef mempty
   let ticks :: Provider (Sum Int) = provide (after 0 & everyi 500) (scrollTask ref)
   let wifiData :: Provider (Maybe (Text, Sum Int)) = (,) <$> ticks <*> wifiName & fmap sequence & fmap (fmap swap)
+  tabsTask <- tabsTask
   let tabsData :: Provider (Maybe PointedFinSet) = provide (after 0 & everyi 100) tabsTask
   let tupled = (,,) <$> tabsData <*> volumeData <*> wifiData
   -- run the provider
   inputG <- runProvider outputU tupled
-  input <- liftIO $ normalize inputG inputU
+  input <- normalize inputG inputU
   -- get vty width
   bounds <- liftIO $ displayBounds (outputIface vty)
   let width = regionWidth bounds
@@ -236,24 +238,32 @@ app = do
   liftIO $ shutdown vty
   where
     -- Given a "latest" input and a unit trigger, yield a triggered latest
-    normalize :: Show a => Input a -> Input () -> IO (Input (Maybe a))
+    normalize :: Show a => Input a -> Input () -> M (Input (Maybe a))
     normalize latestInput triggerInput = do
-      (output, input) <- spawn (newest 1)
-      _tid <- forkIO $ runEffect $ fromInput latestInput >-> handler triggerInput >-> toOutput output
+      env <- ask
+      (output, input) <- liftIO $ spawn (newest 1)
+      _tid <- liftIO $ forkIO $ runEffect $ fromInput latestInput >-> handler env triggerInput >-> toOutput output
       return input
     -- wait for the trigger and yield Just until a count threshold
-    handler :: Show a => Input () -> Pipe a (Maybe a) IO ()
-    handler triggerInput = loop 0
+    handler :: Show a => Environment -> Input () -> Pipe a (Maybe a) IO ()
+    handler env triggerInput = loop 0
       where
         loop :: Show a => Int -> Pipe a (Maybe a) IO ()
         loop i = do
           lift $ runEffect $ fromInput triggerInput >-> await
           a <- await
           yield (Just a)
-          loop (i + 1)
+          case env of
+            (Environment Debug) -> if i < 100 then loop (i + 1) else yield Nothing
+            (Environment Prod) -> loop (i + 1)
 
 runApp :: M () -> IO ()
-runApp (M m) = runReaderT m (Environment 0)
+runApp (M m) = do
+  args <- getArgs
+  let env = case args of
+        "debug" : _ -> Environment Debug
+        _ -> Environment Prod
+  runReaderT m env
 
 main :: IO ()
 main = runApp app
