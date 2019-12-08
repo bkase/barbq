@@ -92,7 +92,7 @@ tilingShell =
 -- scripts taken from ubersicht status widget via chunkwm sample ubersicht
 volumeShell :: Text
 volumeShell =
-  [r| /Users/bkase/barbq2/getvolume/.build/debug/getvolume |]
+  [r| /Users/bkase/barbq2/getvolume/.build/release/getvolume |]
 
 externalIpShell :: Text
 externalIpShell = "curl -s icanhazip.com"
@@ -132,15 +132,23 @@ shellEmpty :: Text -> Task (Maybe Text)
 shellEmpty s =
   (\s' -> if s' == "" then Nothing else Just s') <$> shell s
 
-shellInt :: Text -> Task (Maybe Int)
-shellInt s =
-  runParser <$> shell s
+volumeTask :: Task (Maybe (Int, Bool))
+volumeTask =
+  runParser <$> shell volumeShell
   where
-    runParser :: Text -> Maybe Int
+    runParser :: Text -> Maybe (Int, Bool)
     runParser s = rightToMaybe $ parse parser "" s
       where
-        parser :: Parser Int
-        parser = decimal
+        parser :: Parser (Int, Bool)
+        parser = do
+          volume <- decimal
+          _ <- char ','
+          isMuted <- true <|> false
+          return (volume, isMuted)
+        true :: Parser Bool
+        true = chunk "true" $> True
+        false :: Parser Bool
+        false = chunk "false" $> False
 
 -- TODO: Make the int more composable or something
 runTask :: (MonadIO m, MonadShell m) => Task o -> m o
@@ -220,7 +228,7 @@ app = do
   -- we send unit to unblock so we can use latest
   (outputU, inputU) <- liftIO $ spawn (newest 1)
   -- (purely) describe the providers
-  let volumeData :: Provider Int = provide (after 0 & everyi 500) (fromMaybe 0 <$> shellInt volumeShell)
+  let volumeData :: Provider (Int, Bool) = provide (after 0 & everyi 500) (fromMaybe (1, True) <$> volumeTask)
   let wifiName :: Provider (Maybe Text) = provide (after 0 & everyi 2000) (shellEmpty wifiShell)
   ref <- liftIO $ newIORef mempty
   let ticks :: Provider (Sum Int) = provide (after 0 & everyi 500) (scrollTask ref)

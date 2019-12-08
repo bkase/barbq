@@ -101,7 +101,7 @@ type X a = Maybe a
 
 type A = Maybe PointedFinSet
 
-type B = Int
+type B = (Int, Bool)
 
 type C = Maybe (Text, Sum Int)
 
@@ -146,11 +146,11 @@ tabsComponent = pureProvidedComponent $ draw <$> ask
 
 volumeComponent :: PureBarbqComponent B
 volumeComponent = pureProvidedComponent $ do
-  volume <- ask
-  return $ V.text V.defAttr $ emoji volume <> show volume
+  (volume, isMuted) <- ask
+  return $ V.text V.defAttr $ emoji isMuted <> show volume
   where
-    emoji 0 = "\xf466  "
-    emoji _ = "\xf485  "
+    emoji True = "\xf466  "
+    emoji False = "\xf485  "
 
 type E = (Text, Sum Int, Int, Int)
 
