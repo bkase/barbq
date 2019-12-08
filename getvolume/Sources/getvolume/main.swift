@@ -1,4 +1,5 @@
 import AudioToolbox
+import Darwin
 
 var defaultOutputDeviceID = AudioDeviceID(0)
 var defaultOutputDeviceIDSize = UInt32(MemoryLayout.size(ofValue: defaultOutputDeviceID))
@@ -16,7 +17,7 @@ let status1 = AudioObjectGetPropertyData(
     &defaultOutputDeviceIDSize,
     &defaultOutputDeviceID)
 
-if status1 != 0 { exit(-1) }
+if status1 != 0 { fputs("status1 failed \(status1)\n", stderr); exit(-1) }
 
 var propAddr = AudioObjectPropertyAddress(
     mSelector: AudioObjectPropertySelector(kAudioDevicePropertyMute),
@@ -26,30 +27,26 @@ var propAddr = AudioObjectPropertyAddress(
 var isMuted: uint32 = 0
 var propSize = UInt32(MemoryLayout.size(ofValue: isMuted))
 
-let status2 = AudioHardwareServiceGetPropertyData(defaultOutputDeviceID, &propAddr, 0, nil, &propSize, &isMuted)
+let status2 = AudioObjectGetPropertyData(defaultOutputDeviceID, &propAddr, 0, nil, &propSize, &isMuted)
 
-if status2 != 0 { exit(-1) }
+if status2 != 0 { fputs("status2 failed \(status2)\n", stderr); exit(-1) }
 
-if isMuted != 0 {
-  print(0);
-} else {
-  var volume = Float32(0.0)
-  var volumeSize = UInt32(MemoryLayout.size(ofValue: volume))
+var volume = Float32(0.0)
+var volumeSize = UInt32(MemoryLayout.size(ofValue: volume))
 
-  var volumePropertyAddress = AudioObjectPropertyAddress(
-      mSelector: kAudioHardwareServiceDeviceProperty_VirtualMasterVolume,
-      mScope: kAudioDevicePropertyScopeOutput,
-      mElement: kAudioObjectPropertyElementMaster)
+var volumePropertyAddress = AudioObjectPropertyAddress(
+    mSelector: kAudioHardwareServiceDeviceProperty_VirtualMasterVolume,
+    mScope: kAudioDevicePropertyScopeOutput,
+    mElement: kAudioObjectPropertyElementMaster)
 
-  let status3 = AudioObjectGetPropertyData(
-      defaultOutputDeviceID,
-      &volumePropertyAddress,
-      0,
-      nil,
-      &volumeSize,
-      &volume)
+let status3 = AudioObjectGetPropertyData(
+    defaultOutputDeviceID,
+    &volumePropertyAddress,
+    0,
+    nil,
+    &volumeSize,
+    &volume)
 
-  if status3 != 0 { exit(-1) }
+if status3 != 0 { fputs("status3 failed \(status3)\n", stderr); exit(-1) }
 
-  print(Int(round(volume * 100)))
-}
+print(String(Int(round(volume * 100))) + "," + String(isMuted != 0))
