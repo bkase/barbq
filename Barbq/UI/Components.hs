@@ -14,6 +14,7 @@ import Barbq.Types
 import Barbq.UI.Framework
 import Control.Comonad (Comonad)
 import Control.Comonad.Store (Store, store)
+import Control.Lens ((^.), view)
 import Control.Monad.Co
 import Control.Monad.Writer (tell)
 import Control.Newtype
@@ -99,13 +100,7 @@ two f x y = f [x, y]
 -- Content
 type X a = Maybe a
 
-type A = Maybe PointedFinSet
-
-type B = (Int, Bool)
-
-type C = Maybe (Text, Sum Int)
-
-type Schema = X (A, B, C)
+type Schema' = X Schema
 
 -- youtube "\xf167 \xf04b "
 scrollyComponent :: PureBarbqComponent ScrollyInput
@@ -122,7 +117,7 @@ scrollyComponent = pureProvidedComponent $ do
   let (viewport, _) = splitAt width viewportExtended
   pure $ V.text V.defAttr viewport
 
-tabsComponent :: PureBarbqComponent A
+tabsComponent :: PureBarbqComponent PointedFinSet'
 tabsComponent = pureProvidedComponent $ draw <$> ask
   where
     build :: Int -> Int -> [(Int, V.Attr)]
@@ -144,21 +139,21 @@ tabsComponent = pureProvidedComponent $ draw <$> ask
           list' :: [V.Image] = list & fmap render
        in list' & foldr (<|>) (V.text V.defAttr "")
 
-volumeComponent :: PureBarbqComponent B
+volumeComponent :: PureBarbqComponent Volume
 volumeComponent = pureProvidedComponent $ do
-  (volume, isMuted) <- ask
-  return $ V.text V.defAttr $ emoji isMuted <> show volume
+  v :: Volume <- ask
+  return $ V.text V.defAttr $ emoji (v ^. volumeIsMuted) <> show (v ^. volumeAmount)
   where
     emoji True = "\xf466  "
     emoji False = "\xf485  "
 
-type E = (Text, Sum Int, Int, Int)
+type E = ScrollyInput
 
-knownWifiComponent :: Component (Store (Maybe E)) (Maybe C) V.Image
+knownWifiComponent :: Component (Store (Maybe E)) (Maybe Wifi') V.Image
 knownWifiComponent =
   scrollyComponent & dimap pullback wifiPrefix
   where
-    pullback :: Maybe C -> Maybe E
+    pullback :: Maybe Wifi' -> Maybe E
     pullback mc = mc & fmap (fmap $ \(content, tick) -> (content, tick, 15, 5)) & join
     wifiPrefix :: V.Image -> V.Image
     wifiPrefix img = if V.imageWidth img == 0 then img else V.text V.defAttr "\xf1eb  " <|> img
@@ -166,12 +161,12 @@ knownWifiComponent =
 unknownWifiComponent :: Component Identity () V.Image
 unknownWifiComponent = static $ V.text V.defAttr "\xf127  Disconnected"
 
-wifiComponent :: Component (Choice (Store (Maybe E)) Identity) (Maybe C) V.Image
+wifiComponent :: Component (Choice (Store (Maybe E)) Identity) (Maybe Wifi') V.Image
 wifiComponent =
   stack knownWifiComponent unknownWifiComponent & lmap (,())
     & over Component' (fmap transformUi)
   where
-    transformUi :: forall w1 w2 v. (Comonad w1, Comonad w2) => UI (Co (Choice w1 w2) ()) (Maybe C) v -> UI (Co (Choice w1 w2) ()) (Maybe C) v
+    transformUi :: forall w1 w2 v. (Comonad w1, Comonad w2) => UI (Co (Choice w1 w2) ()) (Maybe Wifi') v -> UI (Co (Choice w1 w2) ()) (Maybe Wifi') v
     transformUi (UI ui) = UI $ \send -> do
       () <- tell $ move send
       ui send
@@ -183,26 +178,15 @@ wifiComponent =
 type Day3 f g h = Day f (Day g h)
 
 -- type Day4 f g h i = Day f (Day3 g h i)
-fst' :: forall a b c. (a, b, c) -> a
-fst' (a, _, _) = a
-
-snd' :: forall a b c. (a, b, c) -> b
-snd' (_, b, _) = b
-
-third' :: forall a b c. (a, b, c) -> c
-third' (_, _, c) = c
-
--- fourth' :: forall a b c d. (a, b, c, d) -> d
--- fourth' (_, _, _, d) = d
-realComponent :: Int -> Component (Day3 (Store (X A)) (Store (X B)) (Choice (Store (X ScrollyInput)) Identity)) Schema V.Image
+realComponent :: Int -> Component (Day3 (Store (X PointedFinSet')) (Store (X Volume)) (Choice (Store (X ScrollyInput)) Identity)) Schema' V.Image
 realComponent parentWidth = combine (layoutSpaceBetween parentWidth) tabs (combine (two $ layoutSpaceAround $ parentWidth `div` 2) volume wifi)
   where
-    tabs :: forall b c. Component (Store (X A)) (X (A, b, c)) V.Image
+    tabs :: Component (Store (X PointedFinSet')) Schema' V.Image
     tabs =
-      tabsComponent & lmap (fmap fst')
-    volume :: forall a c. Component (Store (X B)) (X (a, B, c)) V.Image
+      tabsComponent & lmap (fmap $ view schemaTabs)
+    volume :: Component (Store (X Volume)) Schema' V.Image
     volume =
-      volumeComponent & lmap (fmap snd')
-    wifi :: forall a b. Component (Choice (Store (X ScrollyInput)) Identity) (X (a, b, C)) V.Image
+      volumeComponent & lmap (fmap $ view schemaVolume)
+    wifi :: Component (Choice (Store (X ScrollyInput)) Identity) Schema' V.Image
     wifi =
-      wifiComponent & lmap (fmap third')
+      wifiComponent & lmap (fmap $ viewSchemaWifi')

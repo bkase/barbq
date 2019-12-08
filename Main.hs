@@ -132,19 +132,19 @@ shellEmpty :: Text -> Task (Maybe Text)
 shellEmpty s =
   (\s' -> if s' == "" then Nothing else Just s') <$> shell s
 
-volumeTask :: Task (Maybe (Int, Bool))
+volumeTask :: Task (Maybe Volume)
 volumeTask =
   runParser <$> shell volumeShell
   where
-    runParser :: Text -> Maybe (Int, Bool)
+    runParser :: Text -> Maybe Volume
     runParser s = rightToMaybe $ parse parser "" s
       where
-        parser :: Parser (Int, Bool)
+        parser :: Parser Volume
         parser = do
           volume <- decimal
           _ <- char ','
           isMuted <- true <|> false
-          return (volume, isMuted)
+          return $ Volume volume isMuted
         true :: Parser Bool
         true = chunk "true" $> True
         false :: Parser Bool
@@ -228,14 +228,13 @@ app = do
   -- we send unit to unblock so we can use latest
   (outputU, inputU) <- liftIO $ spawn (newest 1)
   -- (purely) describe the providers
-  let volumeData :: Provider (Int, Bool) = provide (after 0 & everyi 500) (fromMaybe (1, True) <$> volumeTask)
-  let wifiName :: Provider (Maybe Text) = provide (after 0 & everyi 2000) (shellEmpty wifiShell)
+  let volumeData :: Provider Volume = provide (after 0 & everyi 500) (fromMaybe (Volume 0 True) <$> volumeTask)
+  let wifiData :: Provider Wifi = provide (after 0 & everyi 2000) (Wifi <$> shellEmpty wifiShell)
   ref <- liftIO $ newIORef mempty
-  let ticks :: Provider (Sum Int) = provide (after 0 & everyi 500) (scrollTask ref)
-  let wifiData :: Provider (Maybe (Text, Sum Int)) = (,) <$> ticks <*> wifiName & fmap sequence & fmap (fmap swap)
+  let tickData :: Provider Tick = provide (after 0 & everyi 500) (scrollTask ref)
   tabsTask <- tabsTask
-  let tabsData :: Provider (Maybe PointedFinSet) = provide (after 0 & everyi 100) tabsTask
-  let tupled = (,,) <$> tabsData <*> volumeData <*> wifiData
+  let tabsData :: Provider PointedFinSet' = provide (after 0 & everyi 100) tabsTask
+  let tupled = Schema <$> volumeData <*> tabsData <*> wifiData <*> tickData
   -- run the provider
   inputG <- runProvider outputU tupled
   input <- normalize inputG inputU

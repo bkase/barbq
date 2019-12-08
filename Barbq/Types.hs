@@ -20,13 +20,28 @@ module Barbq.Types
     point,
     maxSet,
     mkPointedFinSet,
+    PointedFinSet',
+    Wifi (..),
+    Wifi',
+    viewSchemaWifi',
+    wifiSsid,
+    Volume (..),
+    volumeAmount,
+    volumeIsMuted,
+    Tick,
+    Schema (..),
+    schemaTabs,
+    schemaVolume,
+    schemaTick,
+    schemaWifi,
     ScrollyInput
     )
 where
 
 import Control.Applicative.Free as A
 import Control.Concurrent.Async.Timer (TimerConf)
-import Control.Lens (makeLenses)
+import Control.Lens (makeLenses, view)
+import Control.Lens.Unsound (lensProduct)
 import Control.Monad.Catch (MonadCatch, MonadMask, MonadThrow)
 import Control.Monad.IO.Unlift
 import Data.Text.Lazy
@@ -86,3 +101,35 @@ maxSet :: PointedFinSet -> Int
 maxSet (PointedFinSet tuple) = snd tuple
 
 type ScrollyInput = (Text, Sum Int, Int, Int)
+
+newtype Wifi = Wifi {_wifiSsid :: Maybe Text}
+  deriving (Show)
+
+makeLenses ''Wifi
+
+data Volume = Volume {_volumeAmount :: Int, _volumeIsMuted :: Bool}
+  deriving (Show)
+
+makeLenses ''Volume
+
+type PointedFinSet' = Maybe PointedFinSet
+
+type Tick = Sum Int
+
+data Schema
+  = Schema
+      { _schemaVolume :: Volume,
+        _schemaTabs :: PointedFinSet',
+        _schemaWifi :: Wifi,
+        _schemaTick :: Tick
+        }
+  deriving (Show)
+
+makeLenses ''Schema
+
+type Wifi' = Maybe (Text, Tick)
+
+viewSchemaWifi' :: Schema -> Wifi'
+viewSchemaWifi' = view lens' & fmap swap & fmap sequence & fmap (fmap swap)
+  where
+    lens' = lensProduct (schemaWifi . wifiSsid) schemaTick
