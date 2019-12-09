@@ -1,12 +1,20 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- Derived from https://github.com/paf31/purescript-react-explore
 module Barbq.UI.Framework
@@ -30,6 +38,7 @@ module Barbq.UI.Framework
     liftTrue,
     liftFalse,
     combine,
+    combineN,
     stack,
     stateToCoStore,
     writerToCoTraced
@@ -158,6 +167,71 @@ writerToCoTraced writer = co (tracer writer)
           f = runTraced traced s
        in f a
 
+type family Comonads (ts :: [* -> *]) :: Constraint where
+  Comonads '[] = ()
+  Comonads (w ': ws) = (Comonad w, Comonads ws)
+
+data Nat' = Zero | Succ Nat'
+
+type family Length xs where
+  Length '[] = 'Zero
+  Length (_ ': xs) = 'Succ (Length xs)
+
+data DayNel f ds a where
+  DayOne :: f a -> DayNel f '[] a
+  DayCons :: Day f (DayNel g ds) a -> DayNel f (g ': ds) a
+
+instance Functor f => Functor (DayNel f '[]) where
+  fmap f (DayOne fa) = DayOne (f <$> fa)
+
+instance (Functor f, Functor g) => Functor (DayNel f (g ': ds)) where
+  fmap f (DayCons day) = DayCons $ fmap f day
+
+instance Comonad w => Comonad (DayNel w '[]) where
+
+  extract (DayOne wa) = extract wa
+
+  duplicate (DayOne wa) = DayOne $ (fmap DayOne $ duplicate wa)
+
+instance (Comonad w1, Functor w2, Comonad (DayNel w2 ds)) => Comonad (DayNel w1 (w2 ': ds)) where
+
+  extract (DayCons wa) = extract wa
+
+  duplicate (DayCons wa) = DayCons $ (fmap DayCons $ duplicate wa)
+
+liftCoDayOne :: forall w a. Comonad w => Co w a -> Co (DayNel w '[]) a
+liftCoDayOne c = co (\(DayOne far) -> runCo c far)
+
+data ComponentsNel e v w ws where
+  ComponentsOne :: Component w e v -> ComponentsNel e v w '[]
+  (:::) :: Component w e v -> ComponentsNel e v  w' ws -> ComponentsNel e v w ( w' ': ws)
+
+infixr 6 :::
+
+-- Place N components next to one another
+combineN
+  :: forall w (ws :: [* -> *]) e v. Comonads (w ': ws)
+  => (forall a. UI a e v -> UI a e v -> UI a e v)
+  -> ComponentsNel e v w ws
+  -> Component (DayNel w ws) e v
+combineN _f (ComponentsOne (Component' c)) = Component' (DayOne c) & componentMapAction liftCoDayOne
+-- This is when we switch back to x -> [x] -> x
+-- Component' (DayOne (flip f [] <$> c)) & componentMapAction liftCoDayOne
+combineN f ((Component' c1) ::: (cs :: ComponentsNel e v  w' ws1)) = Component' $ DayCons $ day (build <$> c1) recurse
+  where
+    (Component' recurse) = combineN f cs
+    build :: (Comonads (w ': w1 ': ws1)) => UI (Co w1 ()) e v -> UI (Co (DayNel  w' ws1) ()) e v -> UI (Co (DayNel w1 ( w' ': ws1)) ()) e v
+    build (UI render1) (UI render2) =
+      f (UI (\send -> render1 $ \co -> send (liftLeft' co)))
+        (UI (\send -> render2 $ \co -> send (peekRight' co)))
+
+liftLeft' :: forall w w' ws a. (Functor w, Functor  w', Comonads ( w' ': ws)) => Co w a -> Co (DayNel w ( w' ': ws)) a
+liftLeft' a = co (\(DayCons (Day w nel' f)) -> runCo a (fmap (`f` extract nel') w))
+
+peekRight' :: forall w w' ws a. (Functor w, Comonad  w', Functor (DayNel w ws)) => Co (DayNel w ws) a -> Co (DayNel  w' (w ': ws)) a
+peekRight' nel = co (\(DayCons (Day w' nel' f)) -> runCo nel (\war -> undefined)) -- todo
+
+-- fmap (f (extract w')) nel'))
 -- Place two components next to one another
 combine
   :: forall w1 w2 e v. Comonad w1
