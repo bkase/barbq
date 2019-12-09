@@ -1,9 +1,12 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Barbq.UI.Components
   ( realComponent
@@ -41,7 +44,9 @@ pureProvidedComponent draw = Component' $ store render Nothing
           return v
     unpack' = unpack @(Co' (Store (Maybe e)) ())
 
-static :: V.Image -> Component Identity () V.Image
+type StaticCo = Identity
+
+static :: V.Image -> Component StaticCo () V.Image
 static image = Component' $ Identity render
   where
     render :: UI (Co Identity ()) () V.Image
@@ -98,9 +103,9 @@ two :: forall a b. ([a] -> b) -> (a -> a -> b)
 two f x y = f [x, y]
 
 -- Content
-type X a = Maybe a
+type Schema' = Maybe Schema
 
-type Schema' = X Schema
+type ScrollyCo = Store (Maybe ScrollyInput)
 
 -- youtube "\xf167 \xf04b "
 scrollyComponent :: PureBarbqComponent ScrollyInput
@@ -116,6 +121,8 @@ scrollyComponent = pureProvidedComponent $ do
   let (_, viewportExtended) = splitAt tick'' contentDoubled
   let (viewport, _) = splitAt width viewportExtended
   pure $ V.text V.defAttr viewport
+
+type TabsCo = Store (Maybe PointedFinSet')
 
 tabsComponent :: PureBarbqComponent PointedFinSet'
 tabsComponent = pureProvidedComponent $ draw <$> ask
@@ -139,6 +146,8 @@ tabsComponent = pureProvidedComponent $ draw <$> ask
           list' :: [V.Image] = list & fmap render
        in list' & foldr (<|>) (V.text V.defAttr "")
 
+type VolumeCo = Store (Maybe Volume)
+
 volumeComponent :: PureBarbqComponent Volume
 volumeComponent = pureProvidedComponent $ do
   v :: Volume <- ask
@@ -147,21 +156,21 @@ volumeComponent = pureProvidedComponent $ do
     emoji True = "\xf466  "
     emoji False = "\xf485  "
 
-type E = ScrollyInput
-
-knownWifiComponent :: Component (Store (Maybe E)) (Maybe Wifi') V.Image
+knownWifiComponent :: Component ScrollyCo (Maybe Wifi') V.Image
 knownWifiComponent =
   scrollyComponent & dimap pullback wifiPrefix
   where
-    pullback :: Maybe Wifi' -> Maybe E
+    pullback :: Maybe Wifi' -> Maybe ScrollyInput
     pullback mc = mc & fmap (fmap $ \(content, tick) -> (content, tick, 15, 5)) & join
     wifiPrefix :: V.Image -> V.Image
     wifiPrefix img = if V.imageWidth img == 0 then img else V.text V.defAttr "\xf1eb  " <|> img
 
-unknownWifiComponent :: Component Identity () V.Image
+unknownWifiComponent :: Component StaticCo () V.Image
 unknownWifiComponent = static $ V.text V.defAttr "\xf127  Disconnected"
 
-wifiComponent :: Component (Choice (Store (Maybe E)) Identity) (Maybe Wifi') V.Image
+type WifiCo = Choice ScrollyCo StaticCo
+
+wifiComponent :: Component WifiCo (Maybe Wifi') V.Image
 wifiComponent =
   stack knownWifiComponent unknownWifiComponent & lmap (,())
     & over Component' (fmap transformUi)
@@ -174,19 +183,19 @@ wifiComponent =
     move send (Just Nothing) = send moveFalse
     move send (Just (Just _)) = send moveTrue
 
--- TODO: How to typelevel fold over '[A, B, C] for less boiler platyness
-type Day3 f g h = Day f (Day g h)
+type family DayN f fs where
+  DayN f '[] = f
+  DayN f (g ': hs) = Day f (DayN g hs)
 
--- type Day4 f g h i = Day f (Day3 g h i)
-realComponent :: Int -> Component (Day3 (Store (X PointedFinSet')) (Store (X Volume)) (Choice (Store (X ScrollyInput)) Identity)) Schema' V.Image
+realComponent :: Int -> Component (DayN TabsCo '[VolumeCo, WifiCo]) Schema' V.Image
 realComponent parentWidth = combine (layoutSpaceBetween parentWidth) tabs (combine (two $ layoutSpaceAround $ parentWidth `div` 2) volume wifi)
   where
-    tabs :: Component (Store (X PointedFinSet')) Schema' V.Image
+    tabs :: Component TabsCo Schema' V.Image
     tabs =
       tabsComponent & lmap (fmap $ view schemaTabs)
-    volume :: Component (Store (X Volume)) Schema' V.Image
+    volume :: Component VolumeCo Schema' V.Image
     volume =
       volumeComponent & lmap (fmap $ view schemaVolume)
-    wifi :: Component (Choice (Store (X ScrollyInput)) Identity) Schema' V.Image
+    wifi :: Component WifiCo Schema' V.Image
     wifi =
-      wifiComponent & lmap (fmap $ viewSchemaWifi')
+      wifiComponent & lmap (fmap viewSchemaWifi')
