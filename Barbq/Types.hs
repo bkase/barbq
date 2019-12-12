@@ -29,6 +29,9 @@ module Barbq.Types
     volumeAmount,
     volumeIsMuted,
     Tick,
+    Calendar (..),
+    calendarDate,
+    schemaCalendar,
     Schema (..),
     schemaTabs,
     schemaVolume,
@@ -116,12 +119,18 @@ type PointedFinSet' = Maybe PointedFinSet
 
 type Tick = Sum Int
 
+newtype Calendar = Calendar {_calendarDate :: Maybe Text}
+  deriving (Show)
+
+makeLenses ''Calendar
+
 data Schema
   = Schema
       { _schemaVolume :: Volume,
         _schemaTabs :: PointedFinSet',
         _schemaWifi :: Wifi,
-        _schemaTick :: Tick
+        _schemaTick :: Tick,
+        _schemaCalendar :: Calendar
         }
   deriving (Show)
 

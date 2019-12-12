@@ -23,7 +23,7 @@ import Control.Monad.Writer (tell)
 import Control.Newtype
 import Data.Functor.Day
 import Data.Profunctor hiding (Choice)
-import Data.Text.Lazy (Text, length, replicate, splitAt)
+import Data.Text.Lazy (Text, filter, length, replicate, splitAt)
 import qualified Graphics.Vty as V
 import Graphics.Vty ((<|>))
 import Relude hiding ((<|>), Text, filter, length, replicate, splitAt)
@@ -183,12 +183,23 @@ wifiComponent =
     move send (Just Nothing) = send moveFalse
     move send (Just (Just _)) = send moveTrue
 
+type CalendarCo = Store (Maybe Calendar)
+
+calendarComponent :: PureBarbqComponent Calendar
+calendarComponent = pureProvidedComponent $ do
+  cal :: Calendar <- ask
+  return $ draw $ filter (/= '\n') <$> cal ^. calendarDate
+  where
+    draw :: Maybe Text -> V.Image
+    draw Nothing = mempty
+    draw (Just text) = V.text V.defAttr $ "\xf133  " <> text
+
 type family DayN f fs where
   DayN f '[] = f
   DayN f (g ': hs) = Day f (DayN g hs)
 
-realComponent :: Int -> Component (DayN TabsCo '[VolumeCo, WifiCo]) Schema' V.Image
-realComponent parentWidth = combine (layoutSpaceBetween parentWidth) tabs (combine (two $ layoutSpaceAround $ parentWidth `div` 2) volume wifi)
+realComponent :: Int -> Component (DayN TabsCo '[VolumeCo, WifiCo, CalendarCo]) Schema' V.Image
+realComponent parentWidth = combine (layoutSpaceBetween parentWidth) tabs (combine (two $ layoutSpaceAround $ parentWidth `div` 2) volume (combine (layoutSpaceBetween $ parentWidth `div` 4) wifi calendar))
   where
     tabs :: Component TabsCo Schema' V.Image
     tabs =
@@ -199,3 +210,6 @@ realComponent parentWidth = combine (layoutSpaceBetween parentWidth) tabs (combi
     wifi :: Component WifiCo Schema' V.Image
     wifi =
       wifiComponent & lmap (fmap viewSchemaWifi')
+    calendar :: Component CalendarCo Schema' V.Image
+    calendar =
+      calendarComponent & lmap (fmap $ view schemaCalendar)

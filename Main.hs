@@ -100,8 +100,11 @@ externalIpShell = "curl -s icanhazip.com"
 internalIpShell :: Text
 internalIpShell = "ipconfig getifaddr en0"
 
-wifiShell :: Text
-wifiShell =
+dateShell :: Text
+dateShell = "date '+%a %D | %I:%M %p'"
+
+wifiShell' :: Text
+wifiShell' =
   [r|
   services=$(networksetup -listnetworkserviceorder | grep 'Hardware Port')
 
@@ -229,12 +232,13 @@ app = do
   (outputU, inputU) <- liftIO $ spawn (newest 1)
   -- (purely) describe the providers
   let volumeData :: Provider Volume = provide (after 0 & everyi 500) (fromMaybe (Volume 0 True) <$> volumeTask)
-  let wifiData :: Provider Wifi = provide (after 0 & everyi 2000) (Wifi <$> shellEmpty wifiShell)
+  let wifiData :: Provider Wifi = provide (after 0 & everyi 2000) (Wifi <$> shellEmpty wifiShell')
   ref <- liftIO $ newIORef mempty
   let tickData :: Provider Tick = provide (after 0 & everyi 500) (scrollTask ref)
   tabsTask <- tabsTask
   let tabsData :: Provider PointedFinSet' = provide (after 0 & everyi 100) tabsTask
-  let tupled = Schema <$> volumeData <*> tabsData <*> wifiData <*> tickData
+  let calendarData :: Provider Calendar = provide (after 0 & everyi 10000) (Calendar <$> shellEmpty dateShell)
+  let tupled = Schema <$> volumeData <*> tabsData <*> wifiData <*> tickData <*> calendarData
   -- run the provider
   inputG <- runProvider outputU tupled
   input <- normalize inputG inputU
