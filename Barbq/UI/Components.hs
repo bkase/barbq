@@ -194,19 +194,53 @@ calendarComponent = pureProvidedComponent $ do
     draw Nothing = mempty
     draw (Just text) = V.text V.defAttr $ "\xf133  " <> text
 
+type BatteryCo = Store (Maybe Battery)
+
+batteryComponent :: PureBarbqComponent Battery
+batteryComponent = pureProvidedComponent $ do
+  battery :: Battery <- ask
+  return $ V.text V.defAttr $ emoji (battery ^. batteryPercentage, battery ^. batteryPlugged) <> " " <> show (battery ^. batteryPercentage)
+  where
+    emoji :: (Int, PluggedState) -> Text
+    emoji (_, Plugged) = "\xf1e6 "
+    emoji (i, Unplugged)
+      | i > 80 = "\xf240 "
+      | i > 60 = "\xf241 "
+      | i > 40 = "\xf242 "
+      | i > 20 = "\xf243 "
+      | otherwise = "\xf244 "
+
+type IpAddrsCo = Store (Maybe IpAddrs)
+
+ipAddrsComponent :: PureBarbqComponent IpAddrs
+ipAddrsComponent = pureProvidedComponent $ do
+  ipAddrs :: IpAddrs <- ask
+  return $ V.text V.defAttr $ emoji <> draw (ipAddrs ^. ipAddrsInternal) <> " | " <> draw (ipAddrs ^. ipAddrsExternal)
+  where
+    emoji :: Text
+    emoji = "\xf012  "
+    draw :: Maybe Text -> Text
+    draw = fromMaybe "<none>"
+
 type family DayN f fs where
   DayN f '[] = f
   DayN f (g ': hs) = Day f (DayN g hs)
 
-realComponent :: Int -> Component (DayN TabsCo '[VolumeCo, WifiCo, CalendarCo]) Schema' V.Image
-realComponent parentWidth = combine (layoutSpaceBetween parentWidth) tabs (combine (two $ layoutSpaceAround $ parentWidth `div` 2) volume (combine (layoutSpaceBetween $ parentWidth `div` 4) wifi calendar))
+realComponent :: Int -> Component (DayN (Day TabsCo IpAddrsCo) '[Day VolumeCo BatteryCo, WifiCo, CalendarCo]) Schema' V.Image
+realComponent parentWidth = combine (layoutSpaceBetween parentWidth) (combine (layoutSpaceBetween $ round @_ @Int (toRational parentWidth / 2.5)) tabs ipAddrs) (combine (two $ layoutSpaceAround $ parentWidth `div` 2) (combine (two $ layoutSpaceAround $ parentWidth `div` 4) volume battery) (combine (two $ layoutSpaceAround $ parentWidth `div` 4) wifi calendar))
   where
     tabs :: Component TabsCo Schema' V.Image
     tabs =
       tabsComponent & lmap (fmap $ view schemaTabs)
+    ipAddrs :: Component IpAddrsCo Schema' V.Image
+    ipAddrs =
+      ipAddrsComponent & lmap (fmap $ view schemaIpAddrs)
     volume :: Component VolumeCo Schema' V.Image
     volume =
       volumeComponent & lmap (fmap $ view schemaVolume)
+    battery :: Component BatteryCo Schema' V.Image
+    battery =
+      batteryComponent & lmap (fmap $ view schemaBattery)
     wifi :: Component WifiCo Schema' V.Image
     wifi =
       wifiComponent & lmap (fmap viewSchemaWifi')

@@ -34,7 +34,7 @@ import Data.Text.Lazy
 import Graphics.Vty (displayBounds, mkVty, outputIface, regionWidth, shutdown, standardIOConfig)
 import Pipes ((>->), Pipe, Producer, await, runEffect, yield)
 import Pipes.Concurrent (Input, Output, fromInput, latest, newest, spawn, toOutput)
-import Relude hiding ((<|>), Text)
+import Relude hiding ((<|>), Text, many)
 import System.Environment (getArgs)
 import System.Process (readProcess)
 import Text.Megaparsec
@@ -95,13 +95,16 @@ volumeShell =
   [r| /Users/bkase/barbq2/getvolume/.build/release/getvolume |]
 
 externalIpShell :: Text
-externalIpShell = "curl -s icanhazip.com"
+externalIpShell = "curl -s icanhazip.com | tr -d '\n' || true"
 
 internalIpShell :: Text
-internalIpShell = "ipconfig getifaddr en0"
+internalIpShell = "ipconfig getifaddr en0 | tr -d '\n' || true"
 
 dateShell :: Text
 dateShell = "date '+%a %D | %I:%M %p'"
+
+batteryShell :: Text
+batteryShell = "pmset -g batt"
 
 wifiShell' :: Text
 wifiShell' =
@@ -134,6 +137,28 @@ fi
 shellEmpty :: Text -> Task (Maybe Text)
 shellEmpty s =
   (\s' -> if s' == "" then Nothing else Just s') <$> shell s
+
+batteryParser :: Parser Battery
+batteryParser = do
+  _ <- skipMany (anySingleBut '\'')
+  _ <- char '\''
+  pluggedState <- plugged <|> unplugged
+  _ <- skipMany (anySingleBut ')')
+  _ <- char ')'
+  _ <- many $ char ' ' <|> char '\t'
+  Battery pluggedState <$> decimal
+  where
+    plugged :: Parser PluggedState
+    plugged = chunk "AC Power" $> Plugged
+    unplugged :: Parser PluggedState
+    unplugged = chunk "Battery Power" $> Unplugged
+
+batteryTask :: Task Battery
+batteryTask =
+  runParser <$> shell batteryShell
+  where
+    runParser :: Text -> Battery
+    runParser s = fromMaybe batteryEmpty $ rightToMaybe $ parse batteryParser "" s
 
 volumeTask :: Task (Maybe Volume)
 volumeTask =
@@ -238,7 +263,9 @@ app = do
   tabsTask <- tabsTask
   let tabsData :: Provider PointedFinSet' = provide (after 0 & everyi 100) tabsTask
   let calendarData :: Provider Calendar = provide (after 0 & everyi 10000) (Calendar <$> shellEmpty dateShell)
-  let tupled = Schema <$> volumeData <*> tabsData <*> wifiData <*> tickData <*> calendarData
+  let batteryData :: Provider Battery = provide (after 0 & everyi 1000) batteryTask
+  let ipAddrsData :: Provider IpAddrs = IpAddrs <$> provide (after 0 & everyi 10000) (shellEmpty internalIpShell) <*> provide (after 0 & everyi 10000) (shellEmpty externalIpShell)
+  let tupled = Schema <$> volumeData <*> tabsData <*> wifiData <*> tickData <*> calendarData <*> batteryData <*> ipAddrsData
   -- run the provider
   inputG <- runProvider outputU tupled
   input <- normalize inputG inputU

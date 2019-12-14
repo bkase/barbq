@@ -31,13 +31,23 @@ module Barbq.Types
     Tick,
     Calendar (..),
     calendarDate,
-    schemaCalendar,
     Schema (..),
+    schemaCalendar,
     schemaTabs,
     schemaVolume,
     schemaTick,
     schemaWifi,
-    ScrollyInput
+    schemaBattery,
+    schemaIpAddrs,
+    ScrollyInput,
+    PluggedState (..),
+    Battery (..),
+    batteryPlugged,
+    batteryPercentage,
+    batteryEmpty,
+    IpAddrs (..),
+    ipAddrsExternal,
+    ipAddrsInternal
     )
 where
 
@@ -124,13 +134,39 @@ newtype Calendar = Calendar {_calendarDate :: Maybe Text}
 
 makeLenses ''Calendar
 
+data PluggedState = Plugged | Unplugged
+  deriving (Show)
+
+data Battery
+  = Battery
+      { _batteryPlugged :: PluggedState,
+        _batteryPercentage :: Int
+        }
+  deriving (Show)
+
+batteryEmpty :: Battery
+batteryEmpty = Battery Unplugged 100
+
+makeLenses ''Battery
+
+data IpAddrs
+  = IpAddrs
+      { _ipAddrsInternal :: Maybe Text,
+        _ipAddrsExternal :: Maybe Text
+        }
+  deriving (Show)
+
+makeLenses ''IpAddrs
+
 data Schema
   = Schema
       { _schemaVolume :: Volume,
         _schemaTabs :: PointedFinSet',
         _schemaWifi :: Wifi,
         _schemaTick :: Tick,
-        _schemaCalendar :: Calendar
+        _schemaCalendar :: Calendar,
+        _schemaBattery :: Battery,
+        _schemaIpAddrs :: IpAddrs
         }
   deriving (Show)
 
