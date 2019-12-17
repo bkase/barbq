@@ -30,7 +30,7 @@ import Control.Concurrent.Async.Timer (Timer, TimerConf, defaultConf, setInitDel
 import Control.Lens
 import Control.Monad.IO.Unlift
 import Data.Semigroup ((<>))
-import Data.Text.Lazy
+import Data.Text.Lazy hiding (foldr, length, zipWith)
 import Graphics.Vty (displayBounds, mkVty, outputIface, regionWidth, shutdown, standardIOConfig)
 import Pipes ((>->), Pipe, Producer, await, runEffect, yield)
 import Pipes.Concurrent (Input, Output, fromInput, latest, newest, spawn, toOutput)
@@ -83,10 +83,7 @@ shell = flip ShellTask id
 tilingShell :: Text
 tilingShell =
   [r|
-  desktops=$(chunkc tiling::query -D $(chunkc tiling::query -m id))
-  current=$(/usr/local/bin/chunkc tiling::query -d id)
-
-  echo "$current,${desktops: -1}"
+  yabai -m query --spaces | jq '.[].focused'
 |]
 
 -- scripts taken from ubersicht status widget via chunkwm sample ubersicht
@@ -230,17 +227,15 @@ tabsTask :: MonadReader Environment m => m (Task (Maybe PointedFinSet))
 tabsTask = fmap (fmap (uncurry mkPointedFinSet)) . fixed <$> ask
   where
     fixed :: Environment -> Task (Maybe (Int, Int))
-    fixed (Environment Debug) = untext <$> NopTask "3,6"
-    fixed (Environment Prod) = untext <$> shell tilingShell
-    untext :: Text -> Maybe (Int, Int)
-    untext s = rightToMaybe $ parse numbers "" s
+    fixed (Environment Debug) = NopTask $ Just (3, 6)
+    fixed (Environment Prod) = (fmap . fmap) compute $ parseNums <$> shell tilingShell
+    compute :: [Int] -> (Int, Int)
+    compute xs = (sum $ zipWith (flip (*)) [1 ..] xs, length xs)
+    parseNums :: Text -> Maybe [Int]
+    parseNums s = rightToMaybe $ parse numbers "" s
       where
-        numbers :: Parser (Int, Int)
-        numbers = do
-          point <- decimal
-          _ <- char ','
-          max <- decimal
-          pure (point, max)
+        numbers :: Parser [Int]
+        numbers = many $ decimal <* char '\n'
 
 scrollTask :: IORef (Sum Int) -> Task (Sum Int)
 scrollTask ref = IOTask $ do
