@@ -230,7 +230,7 @@ tabsTask = fmap (fmap (uncurry mkPointedFinSet)) . fixed <$> ask
     fixed (Environment Debug) = NopTask $ Just (3, 6)
     fixed (Environment Prod) = (fmap . fmap) compute $ parseNums <$> shell tilingShell
     compute :: [Int] -> (Int, Int)
-    compute xs = (sum $ zipWith (flip (*)) [1 ..] xs, length xs)
+    compute bits = (sum $ zipWith (*) [1 ..] bits, length bits)
     parseNums :: Text -> Maybe [Int]
     parseNums s = rightToMaybe $ parse numbers "" s
       where
