@@ -88,8 +88,7 @@ tilingShell =
 
 -- scripts taken from ubersicht status widget via chunkwm sample ubersicht
 volumeShell :: Text
-volumeShell =
-  [r| /Users/bkase/barbq2/getvolume/.build/release/getvolume |]
+volumeShell = "barbq-getvolume"
 
 externalIpShell :: Text
 externalIpShell = "curl -s icanhazip.com | tr -d '\n' || true"
