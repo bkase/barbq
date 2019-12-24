@@ -170,9 +170,9 @@ volumeTask =
           isMuted <- true <|> false
           return $ Volume volume isMuted
         true :: Parser Bool
-        true = chunk "true" $> True
+        true = chunk "1" $> True
         false :: Parser Bool
-        false = chunk "false" $> False
+        false = chunk "0" $> False
 
 -- TODO: Make the int more composable or something
 runTask :: (MonadIO m, MonadShell m) => Task o -> m o
