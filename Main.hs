@@ -222,12 +222,11 @@ runProvider triggerOutput (Provider freeAp) = fmap join <$> minput
 
 type Parser = Parsec Void Text
 
-tabsTask :: MonadReader Environment m => m (Task (Maybe PointedFinSet))
-tabsTask = fmap (fmap (uncurry mkPointedFinSet)) . fixed <$> ask
+tabsTask :: Task (Maybe PointedFinSet)
+tabsTask = fmap (uncurry mkPointedFinSet) <$> fixed
   where
-    fixed :: Environment -> Task (Maybe (Int, Int))
-    fixed (Environment Debug) = NopTask $ Just (3, 6)
-    fixed (Environment Prod) = (fmap . fmap) compute $ parseNums <$> shell tilingShell
+    fixed :: Task (Maybe (Int, Int))
+    fixed = (fmap . fmap) compute $ parseNums <$> shell tilingShell
     compute :: [Int] -> (Int, Int)
     compute bits = (sum $ zipWith (*) [1 ..] bits, length bits)
     parseNums :: Text -> Maybe [Int]
@@ -254,7 +253,6 @@ app = do
   let wifiData :: Provider Wifi = provide (after 0 & everyi 2000) (Wifi <$> shellEmpty wifiShell')
   ref <- liftIO $ newIORef mempty
   let tickData :: Provider Tick = provide (after 0 & everyi 500) (scrollTask ref)
-  tabsTask <- tabsTask
   let tabsData :: Provider PointedFinSet' = provide (after 0 & everyi 100) tabsTask
   let calendarData :: Provider Calendar = provide (after 0 & everyi 10000) (Calendar <$> shellEmpty dateShell)
   let batteryData :: Provider Battery = provide (after 0 & everyi 1000) batteryTask
