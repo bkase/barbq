@@ -1,6 +1,8 @@
 # Barbq
 
-A text-based status bar that works on macOS
+Barbq 🍖 is a simple, no frills, terminal-based status bar for macOS.
+
+## Screenshots
 
 ## Installation
 
