@@ -4,6 +4,10 @@ Barbq 🍖 is a simple, no frills, terminal-based status bar for macOS.
 
 ## Screenshots
 
+<img width="731" alt="barbq" src="https://user-images.githubusercontent.com/515445/72689328-1d22a700-3ac5-11ea-9ad7-343965242db1.png">
+
+<img width="1792" alt="motivation" src="https://user-images.githubusercontent.com/515445/72689329-1eec6a80-3ac5-11ea-999a-da140f9ac07c.png">
+
 ## Installation
 
 ### Prerequisites
