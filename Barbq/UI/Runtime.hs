@@ -42,19 +42,16 @@ runRenderM crm vty input = runReaderT m vty
 
 explore :: forall w m e. (Show e, Comonad w) => Pairing m w -> Component' w m e V.Image -> Consumer (Maybe e) RenderM ()
 explore pair space = do
+  let (img, runner) = render space
   vty <- lift ask
-  let (img, runner) = let { (UI ui) = extract (unpack space) } in runWriter (ui send)
-  let pic = V.picForImage img
-  _bounds <- liftIO $ V.outputIface vty & V.displayBounds
-  --liftIO $ print bounds
-  liftIO $ V.update vty pic
-  -- TODO: Keystrokes
-  -- e <- liftIO $ nextEvent vty
+  liftIO $ V.update vty (V.picForImage img)
   e <- await
   case e of
     Nothing -> return ()
     Just e -> explore pair (appEndo (runner e) space)
   where
+    render :: forall v. Component' w m e v -> (v, Handler e (Component' w m e v))
+    render space = let { (UI ui) = extract (unpack space) } in runWriter (ui send)
     send :: forall v. m () -> Endo (Component' w m e v)
     send action =
       Endo $ over Component' $ pair (const id) action <<< duplicate
