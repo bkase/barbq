@@ -1,4 +1,4 @@
-{ compiler ? "ghc865", pkgs ? import <nixpkgs> {} }:
+{ compiler ? "ghc8104", pkgs ? import <nixpkgs> {} }:
 
 let
   getvolume = pkgs.callPackage ./getvolume/default.nix {};
@@ -10,7 +10,7 @@ let
           {
             ghc = super.ghc // { withPackages = super.ghc.withHoogle; };
             ghcWithPackages = self.ghc.withPackages;
-            async-timer = pkgs.haskell.lib.dontCheck super.async-timer;
+            async-timer = (pkgs.haskell.lib.doJailbreak (pkgs.haskell.lib.dontCheck super.async-timer));
           }
       );
     };

@@ -38,5 +38,5 @@ executable barbq
     KindSignatures
     DerivingStrategies
     NoImplicitPrelude
-  build-depends:       base >=4.12 && <4.13, clock, mtl, relude, brick, lens, concurrency, async, async-timer, unliftio-core, free, pipes, pipes-concurrency, unliftio, exceptions, kan-extensions, comonad, vty, text, raw-strings-qq, process, megaparsec, profunctors, newtype
+  build-depends:       base, clock, mtl, relude, brick, lens, concurrency, async, async-timer, unliftio-core, free, pipes, pipes-concurrency, unliftio, exceptions, kan-extensions, comonad, vty, text, raw-strings-qq, process, megaparsec, profunctors, newtype
   default-language:    Haskell2010
