@@ -20,8 +20,8 @@ Barbq 🍖 is a simple, no frills, terminal-based status bar for macOS.
 ### Steps
 
 1. Clone this repo
-2. Add barbq to your [nix-darwin environment.systemPrograms array](https://github.com/bkase/life/blob/8c9f03973da0daffb3efc2a53b5e6d3a82644ac1/darwin-configuration.nix#L7..L17). Alternatively, `nix-build release.nix` and add the `./result` directory to your `PATH`
-3. Run the following commands (perhaps in a [launchd service](https://github.com/bkase/life/blob/e1fb8c0acf886cf9a65b090f9c797291124c7e54/darwin-configuration.nix#L31..L46))
+2. Add barbq to your [nix-darwin environment.systemPrograms array](https://github.com/bkase/life/blob/e438302f9dd40b56f30de82383734912e0e5fe00/darwin-configuration.nix#L4..L10). Alternatively, `nix-build release.nix` and add the `./result` directory to your `PATH`
+3. Run the following commands (perhaps in a [launchd service](https://github.com/bkase/life/blob/e438302f9dd40b56f30de82383734912e0e5fe00/darwin-configuration.nix#L26..L41))
 
 ```
 yabai -m rule --add app=Alacritty sticky=on
